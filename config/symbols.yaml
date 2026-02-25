@@ -1,0 +1,11 @@
+symbols:
+  - symbol: "BTC/USDT:USDT"
+    timeframes: ["1m", "5m", "15m", "1h", "4h", "1d"]
+    leverage: 5
+    enabled: true
+
+  # 추후 추가 가능
+  # - symbol: "ETH/USDT:USDT"
+  #   timeframes: ["5m", "15m", "1h", "4h"]
+  #   leverage: 3
+  #   enabled: false

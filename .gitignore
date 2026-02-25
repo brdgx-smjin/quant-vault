@@ -1,0 +1,30 @@
+# Environment
+.env
+.venv/
+__pycache__/
+*.pyc
+
+# Data
+data/raw/
+data/processed/
+models/*.pt
+models/*.pkl
+models/*.joblib
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/*.log
+
+# Obsidian
+.obsidian/

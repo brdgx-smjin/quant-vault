@@ -1,0 +1,22 @@
+risk_management:
+  max_loss_per_trade_pct: 0.02      # 2% per trade
+  daily_max_loss_pct: 0.05          # 5% daily
+  max_open_positions: 3
+  max_leverage: 10
+  default_leverage: 5
+  trailing_stop_pct: 0.015          # 1.5%
+
+position_sizing:
+  method: "kelly"                    # kelly | fixed | volatility_adjusted
+  kelly_fraction: 0.25              # quarter-Kelly
+  fixed_amount_usdt: 100
+
+stop_loss:
+  method: "atr"                      # atr | fixed_pct | swing_low
+  atr_multiplier: 2.0
+  fixed_pct: 0.02
+
+take_profit:
+  method: "fibonacci_extension"
+  levels: [1.0, 1.618, 2.618]
+  partial_close_pcts: [0.5, 0.3, 0.2]  # 50% -> 30% -> 20% 분할 익절
