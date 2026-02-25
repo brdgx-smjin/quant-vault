@@ -65,6 +65,7 @@ class BacktestEngine:
         max_hold_bars: int = 48,  # Auto-exit after N bars if no signal
         trailing_atr_mult: float = 0.0,  # 0 = disabled; >0 = ATR trailing stop
         breakeven_at_r: float = 0.0,  # 0 = disabled; >0 = move SL to entry after N*R profit
+        freq: str = "1h",  # Data frequency for Sharpe ratio annualization
     ) -> None:
         self.initial_capital = initial_capital
         self.commission = commission
@@ -72,6 +73,7 @@ class BacktestEngine:
         self.max_hold_bars = max_hold_bars
         self.trailing_atr_mult = trailing_atr_mult
         self.breakeven_at_r = breakeven_at_r
+        self.freq = freq
 
     def run(
         self,
@@ -266,7 +268,7 @@ class BacktestEngine:
             init_cash=self.initial_capital,
             fees=self.commission,
             slippage=self.slippage,
-            freq="1h",
+            freq=self.freq,
         )
 
         result = self._extract_results(pf)
