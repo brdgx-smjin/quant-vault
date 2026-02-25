@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Live paper trading bot entry point.
 
-Runs the TradingEngine with VWAP+MTF strategy on Binance testnet.
-VWAP_24_2.0+MTF selected: WF robustness 80% (5w), OOS +8.91%, DD 11%.
+Runs the TradingEngine with 15m Cross-TF portfolio on Binance testnet.
+Phase 16 validated (9w): 89% robustness (8/9 windows), OOS +19.61%.
+  - 1h RSI_35_65+MTF(4h):  mean reversion (66% robustness at 9w)  → 33%
+  - 1h DC_24+MTF(4h):      trend following (55% robustness at 9w) → 33%
+  - 15m RSI_35_65+MTF(4h): mean reversion (77% robustness at 9w) → 34%
+  - Cross-TF: decorrelates negative windows (15m W5 vs 1h W6) → 89%
 Hard safety abort if TESTNET=false to prevent accidental real-money trading.
 """
 
@@ -20,8 +24,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config.settings import SYMBOL, TESTNET
 from src.execution.trading_engine import TradingEngine
 from src.monitoring.logger import setup_logging
+from src.strategy.cross_tf_portfolio import CrossTimeframePortfolio
+from src.strategy.donchian_trend import DonchianTrendStrategy
 from src.strategy.mtf_filter import MultiTimeframeFilter
-from src.strategy.vwap_mean_reversion import VWAPMeanReversionStrategy
+from src.strategy.rsi_mean_reversion import RSIMeanReversionStrategy
 
 logger = setup_logging("live")
 
@@ -40,22 +46,56 @@ root.addHandler(file_h)
 logger.propagate = False
 
 
-def build_strategy() -> MultiTimeframeFilter:
-    """Build the VWAP+MTF strategy with 4h EMA trend filter.
+def build_strategy() -> CrossTimeframePortfolio:
+    """Build cross-TF portfolio: 1h RSI + 1h DC + 15m RSI, all with 4h MTF.
+
+    Phase 16 validated (9w): 89% robustness, OOS +19.61%, only W2 negative.
 
     Returns:
-        MultiTimeframeFilter wrapping VWAPMeanReversionStrategy.
+        CrossTimeframePortfolio with 33/33/34 weights.
     """
-    base = VWAPMeanReversionStrategy(
-        vwap_period=24,
-        band_mult=1.5,
-        rsi_threshold=40.0,
+    # 1h RSI Mean Reversion + MTF(4h)
+    rsi_1h = RSIMeanReversionStrategy(
+        rsi_oversold=35,
+        rsi_overbought=65,
         atr_sl_mult=2.0,
-        cooldown_bars=2,
+        atr_tp_mult=3.0,
+        cooldown_bars=6,
     )
-    strategy = MultiTimeframeFilter(base)
-    logger.info("Strategy: %s (VWAP24+1.5σ, RSI40, SL=2ATR, cool=2, 4h MTF)", strategy.name)
-    return strategy
+    rsi_1h_mtf = MultiTimeframeFilter(rsi_1h)
+
+    # 1h Donchian Trend Following + MTF(4h)
+    dc_1h = DonchianTrendStrategy(
+        entry_period=24,
+        atr_sl_mult=2.0,
+        rr_ratio=2.0,
+        vol_mult=0.8,
+        cooldown_bars=6,
+    )
+    dc_1h_mtf = MultiTimeframeFilter(dc_1h)
+
+    # 15m RSI Mean Reversion + MTF(4h)
+    rsi_15m = RSIMeanReversionStrategy(
+        rsi_oversold=35,
+        rsi_overbought=65,
+        atr_sl_mult=2.0,
+        atr_tp_mult=3.0,
+        cooldown_bars=12,
+    )
+    rsi_15m_mtf = MultiTimeframeFilter(rsi_15m)
+
+    # Cross-TF portfolio: 33/33/34 weights
+    portfolio = CrossTimeframePortfolio(
+        strategies_15m=[(rsi_15m_mtf, 0.34)],
+        strategies_1h=[(rsi_1h_mtf, 0.33), (dc_1h_mtf, 0.33)],
+    )
+
+    logger.info("Strategy: %s", portfolio.name)
+    logger.info("  1h RSI:  35/65, SL=2.0ATR, TP=3.0ATR, cool=6 + 4h MTF (33%%)")
+    logger.info("  1h DC:   24-bar, SL=2.0ATR, RR=2.0, vol=0.8x + 4h MTF (33%%)")
+    logger.info("  15m RSI: 35/65, SL=2.0ATR, TP=3.0ATR, cool=12 + 4h MTF (34%%)")
+    logger.info("  Allocation: 33/33/34 (cross-TF)")
+    return portfolio
 
 
 async def main() -> None:
@@ -68,9 +108,10 @@ async def main() -> None:
         sys.exit(1)
 
     logger.info("=" * 60)
-    logger.info("  LIVE PAPER TRADING — %s | 1h + 4h MTF", SYMBOL)
+    logger.info("  LIVE PAPER TRADING — %s | 15m + 1h Cross-TF", SYMBOL)
     logger.info("  Mode: TESTNET (paper trading)")
-    logger.info("  Strategy: VWAP_24_1.5 + MTF (RSI40, SL=2ATR, cool=2)")
+    logger.info("  Strategy: Cross-TF Portfolio (1hRSI + 1hDC + 15mRSI)")
+    logger.info("  Phase 16: 89%% robustness, OOS +19.61%%")
     logger.info("=" * 60)
     logger.info("")
 
@@ -78,10 +119,10 @@ async def main() -> None:
     engine = TradingEngine(
         strategy=strategy,
         symbol=SYMBOL,
-        timeframe="1h",
+        timeframe="15m",
         testnet=True,
-        warmup_bars=200,
-        htf_timeframe="4h",
+        warmup_bars=2000,
+        htf_timeframe="1h",
     )
 
     # Graceful shutdown on SIGINT/SIGTERM

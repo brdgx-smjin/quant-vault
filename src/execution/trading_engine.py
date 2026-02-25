@@ -25,7 +25,7 @@ from src.strategy.base import BaseStrategy, Signal
 
 logger = logging.getLogger(__name__)
 
-MAX_DF_BARS = 500
+MAX_DF_BARS = 1200  # Enough for 15m→1h→4h resample (1200/4/4=75 4h bars for EMA_50)
 
 
 class TradingEngine:
@@ -243,8 +243,8 @@ class TradingEngine:
             self._rebuild_htf()
             self.strategy.set_htf_data(self.df_htf)
             trend = "bullish" if self.df_htf["ema_20"].iloc[-1] > self.df_htf["ema_50"].iloc[-1] else "bearish"
-            logger.info("[MTF] 4h trend: %s (EMA20=%.2f, EMA50=%.2f)",
-                        trend,
+            logger.info("[MTF] %s trend: %s (EMA20=%.2f, EMA50=%.2f)",
+                        self.htf_timeframe, trend,
                         self.df_htf["ema_20"].iloc[-1],
                         self.df_htf["ema_50"].iloc[-1])
 
@@ -285,6 +285,13 @@ class TradingEngine:
         if "rsi" in meta:
             parts.append(f"RSI {meta['rsi']:.1f}")
 
+        # Donchian channel breakout
+        if "channel_high" in meta or "channel_low" in meta:
+            bp = meta.get("breakout_pct", 0)
+            parts.append(f"DC-24 채널 돌파 ({bp:.2f}%)")
+        if "volume_ratio" in meta:
+            parts.append(f"거래량 {meta['volume_ratio']:.1f}x")
+
         # BB squeeze breakout
         if "squeeze" in meta:
             parts.append("BB Squeeze 돌파")
@@ -311,7 +318,7 @@ class TradingEngine:
             ema50 = self.df_htf["ema_50"].iloc[-1]
             if not (pd.isna(ema20) or pd.isna(ema50)):
                 trend = "상방" if float(ema20) > float(ema50) else "하방"
-                signal.reason += f" + 4h EMA 트렌드 {trend}"
+                signal.reason += f" + {self.htf_timeframe} EMA 트렌드 {trend}"
 
         # Check daily trade limit
         if self.dashboard.is_daily_limit_reached():
@@ -325,6 +332,13 @@ class TradingEngine:
         if not risk_check.approved:
             logger.warning("Trade rejected by RiskManager: %s", risk_check.reason)
             return
+
+        # Apply portfolio weight to position size (50/50 = 0.5x per strategy)
+        portfolio_weight = signal.metadata.get("portfolio_weight", 1.0)
+        if portfolio_weight < 1.0:
+            risk_check.position_size = risk_check.position_size * Decimal(str(portfolio_weight))
+            logger.info("[PORTFOLIO] Position scaled by %.0f%% → size=%.4f",
+                        portfolio_weight * 100, float(risk_check.position_size))
 
         # Close any existing position first
         if self.symbol in self.position_manager.positions:
