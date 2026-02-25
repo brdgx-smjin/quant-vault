@@ -13,6 +13,7 @@ from src.execution.position_manager import Position, PositionManager
 from src.execution.trading_engine import MAX_DF_BARS, TradingEngine
 from src.indicators.basic import BasicIndicators
 from src.strategy.base import BaseStrategy, Signal, TradeSignal
+from src.monitoring.dashboard import DashboardProvider
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +147,59 @@ class TestDuplicateTimestampHandling:
         await engine._on_candle_close(kline)
         assert len(engine.df) <= MAX_DF_BARS
 
+    @pytest.mark.asyncio
+    async def test_multiple_duplicates_all_cleaned(self) -> None:
+        """Multiple duplicate timestamps should all be resolved."""
+        engine = _build_engine()
+        df = _make_ohlcv(50)
+        # Inject 3 copies of the same row
+        dup1 = df.iloc[-1:].copy()
+        dup2 = df.iloc[-2:-1].copy()
+        df = pd.concat([df, dup1, dup2, dup1])
+        engine.df = df  # Purposely don't clean — let _on_candle_close handle it
+
+        new_ts = df.index[-1] + pd.Timedelta(minutes=60)
+        kline = {
+            "t": int(new_ts.timestamp() * 1000),
+            "o": "51000", "h": "51100", "l": "50900", "c": "51050", "v": "123",
+            "x": True,
+        }
+        await engine._on_candle_close(kline)
+        assert not engine.df.index.duplicated().any()
+
+    @pytest.mark.asyncio
+    async def test_out_of_order_timestamp_sorted(self) -> None:
+        """Out-of-order timestamps should be sorted after append."""
+        engine = _build_engine()
+        engine.df = BasicIndicators.add_all(_make_ohlcv(50))
+
+        # Insert a timestamp that's before the last bar (out of order)
+        early_ts = engine.df.index[10] + pd.Timedelta(seconds=1)
+        kline = {
+            "t": int(early_ts.timestamp() * 1000),
+            "o": "51000", "h": "51100", "l": "50900", "c": "51050", "v": "123",
+            "x": True,
+        }
+        await engine._on_candle_close(kline)
+        assert engine.df.index.is_monotonic_increasing
+
+    @pytest.mark.asyncio
+    async def test_indicators_present_after_candle_close(self) -> None:
+        """BasicIndicators columns should be present after processing."""
+        engine = _build_engine()
+        engine.df = BasicIndicators.add_all(_make_ohlcv(50))
+        new_ts = engine.df.index[-1] + pd.Timedelta(minutes=30)
+
+        kline = {
+            "t": int(new_ts.timestamp() * 1000),
+            "o": "51000", "h": "51100", "l": "50900", "c": "51050", "v": "123",
+            "x": True,
+        }
+        await engine._on_candle_close(kline)
+        expected_cols = ["rsi_14", "atr_14", "ema_20", "ema_50"]
+        for col in expected_cols:
+            assert col in engine.df.columns, f"Missing indicator column: {col}"
+
 
 # ---------------------------------------------------------------------------
 # Tests: SL/TP check logic
@@ -213,6 +267,27 @@ class TestSlTpCheck:
         await engine._check_sl_tp(high=49000.0, low=47900.0)
         assert "BTC/USDT:USDT" not in engine.position_manager.positions
 
+    @pytest.mark.asyncio
+    async def test_exact_sl_price_triggers(self) -> None:
+        """SL should trigger at exactly the SL price (boundary)."""
+        engine = self._setup_engine_with_position("long", 50000, 49000, 52000)
+        await engine._check_sl_tp(high=50500.0, low=49000.0)
+        assert "BTC/USDT:USDT" not in engine.position_manager.positions
+
+    @pytest.mark.asyncio
+    async def test_exact_tp_price_triggers(self) -> None:
+        """TP should trigger at exactly the TP price (boundary)."""
+        engine = self._setup_engine_with_position("long", 50000, 49000, 52000)
+        await engine._check_sl_tp(high=52000.0, low=51000.0)
+        assert "BTC/USDT:USDT" not in engine.position_manager.positions
+
+    @pytest.mark.asyncio
+    async def test_no_position_is_noop(self) -> None:
+        """_check_sl_tp should do nothing when no position exists."""
+        engine = _build_engine()
+        # Should not raise
+        await engine._check_sl_tp(high=50000.0, low=49000.0)
+
 
 # ---------------------------------------------------------------------------
 # Tests: _closing guard
@@ -272,3 +347,202 @@ class TestClosingGuard:
         await engine._check_sl_tp(high=50000.0, low=48000.0)
         # Position should still exist
         assert "BTC/USDT:USDT" in engine.position_manager.positions
+
+    @pytest.mark.asyncio
+    async def test_closing_resets_on_execution_failure(self) -> None:
+        """_closing should reset to False if executor raises."""
+        engine = _build_engine()
+        engine.executor.execute = AsyncMock(side_effect=Exception("API error"))
+        engine.position_manager.open_position(
+            symbol="BTC/USDT:USDT",
+            side="long",
+            entry_price=Decimal("50000"),
+            amount=Decimal("0.01"),
+            leverage=5,
+        )
+        await engine._close_position(49000.0, "stop_loss")
+        assert engine._closing is False
+        # Position should still exist (close failed)
+        assert "BTC/USDT:USDT" in engine.position_manager.positions
+
+
+# ---------------------------------------------------------------------------
+# Tests: Partial TP logic
+# ---------------------------------------------------------------------------
+
+class TestPartialTakeProfit:
+    """Verify partial take-profit behavior."""
+
+    def _setup_engine_with_partial_tp(self) -> TradingEngine:
+        """Build engine with a LONG position and 3-level partial TP."""
+        engine = _build_engine()
+        engine.executor.execute = AsyncMock(return_value={"id": "test"})
+        engine.position_manager.open_position(
+            symbol="BTC/USDT:USDT",
+            side="long",
+            entry_price=Decimal("50000"),
+            amount=Decimal("0.10"),
+            leverage=5,
+            stop_loss=Decimal("49000"),
+            take_profit=Decimal("53000"),
+        )
+        pos = engine.position_manager.positions["BTC/USDT:USDT"]
+        # 3 TP levels: 51000 (50%), 52000 (30%), 53000 (20%)
+        pos.tp_levels = [
+            (Decimal("51000"), Decimal("0.5")),
+            (Decimal("52000"), Decimal("0.3")),
+            (Decimal("53000"), Decimal("0.2")),
+        ]
+        pos.next_tp_idx = 0
+        return engine
+
+    @pytest.mark.asyncio
+    async def test_partial_tp1_closes_fraction(self) -> None:
+        """TP1 hit should close 50% and advance next_tp_idx."""
+        engine = self._setup_engine_with_partial_tp()
+        await engine._check_sl_tp(high=51100.0, low=50500.0)
+
+        pos = engine.position_manager.positions.get("BTC/USDT:USDT")
+        assert pos is not None, "Position should still exist (partial close)"
+        assert pos.next_tp_idx == 1
+        # 50% of 0.10 = 0.05 closed, remaining = 0.05
+        assert pos.amount == Decimal("0.05")
+
+    @pytest.mark.asyncio
+    async def test_partial_tp1_moves_sl_to_breakeven(self) -> None:
+        """After TP1, SL should move to entry price (breakeven)."""
+        engine = self._setup_engine_with_partial_tp()
+        await engine._check_sl_tp(high=51100.0, low=50500.0)
+
+        pos = engine.position_manager.positions["BTC/USDT:USDT"]
+        assert pos.stop_loss == Decimal("50000")
+
+    @pytest.mark.asyncio
+    async def test_final_tp_closes_remaining(self) -> None:
+        """Last TP level should close the entire remaining position."""
+        engine = self._setup_engine_with_partial_tp()
+        pos = engine.position_manager.positions["BTC/USDT:USDT"]
+        # Simulate TP1 and TP2 already hit
+        pos.next_tp_idx = 2
+        pos.amount = Decimal("0.02")
+
+        await engine._check_sl_tp(high=53100.0, low=52500.0)
+        # Position fully closed
+        assert "BTC/USDT:USDT" not in engine.position_manager.positions
+
+    @pytest.mark.asyncio
+    async def test_partial_close_guard(self) -> None:
+        """_partial_close should be blocked when _closing is True."""
+        engine = self._setup_engine_with_partial_tp()
+        engine._closing = True
+        await engine._check_sl_tp(high=51100.0, low=50500.0)
+        # Nothing should change
+        pos = engine.position_manager.positions["BTC/USDT:USDT"]
+        assert pos.amount == Decimal("0.10")
+        assert pos.next_tp_idx == 0
+
+
+# ---------------------------------------------------------------------------
+# Tests: Signal reason enrichment
+# ---------------------------------------------------------------------------
+
+class TestSignalReasonEnrichment:
+    """Verify _build_signal_reason generates reason from metadata."""
+
+    def test_vwap_metadata_generates_reason(self) -> None:
+        """VWAP signal metadata should produce z-score + RSI reason."""
+        signal = TradeSignal(
+            signal=Signal.LONG,
+            symbol="BTC/USDT:USDT",
+            price=50000.0,
+            timestamp=pd.Timestamp.now(),
+            metadata={"strategy": "vwap_mean_reversion", "z_score": -2.5, "rsi": 28.3},
+        )
+        reason = TradingEngine._build_signal_reason(signal)
+        assert "VWAP" in reason
+        assert "2.5" in reason
+        assert "하단" in reason
+        assert "RSI" in reason
+        assert "28.3" in reason
+
+    def test_short_vwap_shows_upper(self) -> None:
+        """SHORT VWAP signal should show upper band touch."""
+        signal = TradeSignal(
+            signal=Signal.SHORT,
+            symbol="BTC/USDT:USDT",
+            price=50000.0,
+            timestamp=pd.Timestamp.now(),
+            metadata={"strategy": "vwap_mean_reversion", "z_score": 2.1, "rsi": 72.0},
+        )
+        reason = TradingEngine._build_signal_reason(signal)
+        assert "상단" in reason
+
+    def test_existing_reason_preserved(self) -> None:
+        """If signal already has a reason, it should be returned as-is."""
+        signal = TradeSignal(
+            signal=Signal.LONG,
+            symbol="BTC/USDT:USDT",
+            price=50000.0,
+            timestamp=pd.Timestamp.now(),
+            reason="Custom reason",
+            metadata={"z_score": -2.0, "rsi": 30.0},
+        )
+        reason = TradingEngine._build_signal_reason(signal)
+        assert reason == "Custom reason"
+
+    def test_empty_metadata_returns_strategy_name(self) -> None:
+        """Empty metadata should fall back to strategy name."""
+        signal = TradeSignal(
+            signal=Signal.LONG,
+            symbol="BTC/USDT:USDT",
+            price=50000.0,
+            timestamp=pd.Timestamp.now(),
+            metadata={"strategy": "some_strat"},
+        )
+        reason = TradingEngine._build_signal_reason(signal)
+        assert reason == "some_strat"
+
+    def test_no_metadata_returns_empty(self) -> None:
+        """No metadata and no reason should return empty string."""
+        signal = TradeSignal(
+            signal=Signal.LONG,
+            symbol="BTC/USDT:USDT",
+            price=50000.0,
+            timestamp=pd.Timestamp.now(),
+        )
+        reason = TradingEngine._build_signal_reason(signal)
+        assert reason == ""
+
+
+# ---------------------------------------------------------------------------
+# Tests: Daily trade limit integration
+# ---------------------------------------------------------------------------
+
+class TestDailyTradeLimit:
+    """Verify engine respects daily trade limit from dashboard."""
+
+    @pytest.mark.asyncio
+    async def test_signal_skipped_at_daily_limit(self) -> None:
+        """Signal should be skipped when daily trade limit reached."""
+        engine = _build_engine()
+        engine.df = BasicIndicators.add_all(_make_ohlcv(50))
+        engine.dashboard = DashboardProvider(
+            initial_equity=Decimal("5000"), daily_trade_limit=2,
+        )
+        # Record 2 trades to hit limit
+        engine.dashboard.record_trade(Decimal("10"), {})
+        engine.dashboard.record_trade(Decimal("20"), {})
+        assert engine.dashboard.is_daily_limit_reached()
+
+        signal = TradeSignal(
+            signal=Signal.LONG,
+            symbol="BTC/USDT:USDT",
+            price=50000.0,
+            timestamp=pd.Timestamp.now(),
+            stop_loss=49000.0,
+            take_profit=52000.0,
+            metadata={"strategy": "test"},
+        )
+        # Should NOT execute (daily limit reached)
+        await engine._execute_signal(signal)
+        assert "BTC/USDT:USDT" not in engine.position_manager.positions

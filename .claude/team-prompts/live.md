@@ -9,19 +9,26 @@
 ## 현재 상태
 - 라이브 엔진: src/execution/trading_engine.py (WebSocket → Signal → Risk → Execute)
 - 최근 에러: pandas.errors.InvalidIndexError (중복 인덱스, 일부 수정 적용됨)
-- 전략: Fib+TrendFilter (4h + 30m MTF) — scripts/live_trading.py에서 설정
+- **사용할 전략: VWAP_24_2.0+MTF (1h + 4h trend filter)**
+  - Phase 9 백테스트 결과: OOS +8.91%, Robustness 80% (4/5), 7w 검증 71% (5/7)
+  - Full: +151.97%, Sharpe 1.24, MaxDD 11.0%, PF 2.71, WR 54.3%, 92 trades
+  - 전략 코드: src/strategy/vwap_mean_reversion.py
+  - MTF 필터: src/strategy/mtf_filter.py (4h EMA trend)
+  - 기존 Fib+TrendFilter에서 VWAP+MTF로 교체해야 함
 - 모드: Binance Testnet (paper trading)
 - 리스크 설정: config/risk.yaml (2% per trade, 5x leverage, Kelly 25%)
 - 알림: Discord webhook (src/monitoring/alerter.py)
 
 ## 구체적 임무 (우선순위 순)
 
-### 1. 라이브 데모 매매 실행 (최우선)
-Binance Testnet에서 실제 데모 매매를 실행해야 합니다:
-- scripts/live_trading.py를 통해 라이브 엔진 시작
+### 1. VWAP+MTF 전략으로 라이브 데모 매매 실행 (최우선)
+Binance Testnet에서 VWAP_24_2.0+MTF 전략으로 데모 매매를 실행해야 합니다:
+- scripts/live_trading.py를 수정하여 전략을 Fib+TrendFilter → VWAP+MTF로 교체
+  - VWAPMeanReversion(vwap_period=24, std_mult=2.0) + MTFFilter(htf_timeframe="4h")
+  - 기존 live_trading.py의 전략 초기화 부분만 변경 (나머지 엔진 로직은 그대로)
 - 엔진이 안정적으로 WebSocket에 연결되고, 시그널 생성 → 주문 실행 되는지 확인
 - 에러 발생 시 즉시 수정하고 재시작
-- 목표: 엔진이 크래시 없이 지속적으로 동작하는 상태
+- 목표: VWAP+MTF 전략으로 엔진이 크래시 없이 지속적으로 동작하는 상태
 
 ### 2. Discord 알림에 포지션 근거 포함 (중요)
 포지션을 잡거나 조정할 때, **왜 그 포지션을 잡았는지 근거**를 Discord 알림에 포함해야 합니다:
@@ -29,7 +36,7 @@ Binance Testnet에서 실제 데모 매매를 실행해야 합니다:
 - 포지션 진입 시 알림 예시:
   ```
   📈 LONG 진입 | BTC/USDT @ 95,200
-  근거: Fib 38.2% 되돌림 + EMA200 위 + 30m BBSqueeze 확장
+  근거: VWAP-2σ 하단 터치 + 4h EMA200 상방 트렌드
   SL: 94,100 | TP: 97,500 | Risk: 1.8%
   ```
 - 포지션 종료 시 알림 예시:

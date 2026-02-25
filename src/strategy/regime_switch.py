@@ -5,6 +5,12 @@ to appropriate sub-strategies.
 
 High ADX → trending → momentum/breakout strategy (e.g., BBSqueeze)
 Low ADX  → ranging  → mean reversion strategy (e.g., RSI MR)
+
+Walk-Forward results (1h, BB+RSI_MR sub-strategies):
+  Phase 10 (5w):  80% robustness, OOS +5.48%, Full +6.67%, DD 15.8%
+  Phase 10 (7w):  71% robustness, OOS +3.53%
+
+Best config: adx_threshold=20. Higher thresholds (25-35) degrade OOS.
 """
 
 from __future__ import annotations
@@ -18,15 +24,13 @@ from src.strategy.base import BaseStrategy, Signal, TradeSignal
 class RegimeSwitchStrategy(BaseStrategy):
     """Switch between trending and ranging strategies based on ADX.
 
-    Walk-Forward results (Phase 9, 1h, BB+RSI_MR sub-strategies):
-      Regime_ADX20 (5w): 80% robustness, OOS +5.48%, Full +6.67%, DD 15.8%
-      Regime_ADX25 (5w): 80% robustness, OOS -1.07%, Full -21.92%
-      Regime_ADX30 (5w): 60% robustness, OOS +1.43%
-      Regime_ADX20_MTF (5w): 60% robustness, OOS +7.34%
-      Regime_ADX20 (7w): 71% robustness, OOS +3.53%, DD 15.8%
+    Walk-Forward results (Phase 10, 1h, BB+RSI_MR sub-strategies):
+      5w: 80% robustness, OOS +5.48%, Full +6.67%, DD 15.8%, PF 1.09
+      7w: 71% robustness, OOS +3.53%
 
     ADX20 threshold is optimal. Higher thresholds degrade full-period returns.
     Modest returns but consistent (80% robustness at 5w, 71% at 7w).
+    ML Regime Classifier (Phase 10c) does NOT improve over simple ADX threshold.
     """
 
     name = "regime_switch"

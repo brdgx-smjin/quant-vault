@@ -209,42 +209,60 @@ class BinanceCollector:
     ) -> pd.DataFrame:
         """Fetch open interest history from Binance Futures.
 
+        Uses a separate non-testnet exchange instance since testnet does not
+        support fapiData endpoints. Open interest is public data.
+
+        Note: Binance OI API limits startTime to ~30 days in the past.
+        This method paginates within that window.
+
         Args:
             timeframe: Period for open interest data (5m, 15m, 30m, 1h, 2h, 4h, 6h, 12h, 1d).
-            since: Start timestamp in milliseconds.
+            since: Start timestamp in milliseconds (max ~30 days ago).
             limit: Number of records per request (max 500).
 
         Returns:
             DataFrame with open interest data.
         """
-        exchange = await self._get_exchange()
         tf_map = {
             "5m": "5m", "15m": "15m", "30m": "30m",
             "1h": "1h", "2h": "2h", "4h": "4h",
             "6h": "6h", "12h": "12h", "1d": "1d",
         }
         period = tf_map.get(timeframe, "1h")
+        symbol = self.symbol.replace("/", "").replace(":USDT", "")
+
+        # Clamp since to ~29 days ago (API limit)
+        max_lookback_ms = int((datetime.utcnow() - timedelta(days=29)).timestamp() * 1000)
+        if since is None or since < max_lookback_ms:
+            since = max_lookback_ms
+            logger.info("OI API limited to ~30 days lookback, clamping startTime")
+
+        # Create a non-testnet exchange for public data
+        prod_exchange = ccxt.binanceusdm({"enableRateLimit": True})
+
         all_records: list[dict] = []
         current_since = since
 
-        while True:
-            params = {
-                "symbol": self.symbol.replace("/", "").replace(":USDT", ""),
-                "period": period,
-                "limit": min(limit, 500),
-            }
-            if current_since:
-                params["startTime"] = current_since
+        try:
+            while True:
+                params: dict = {
+                    "symbol": symbol,
+                    "period": period,
+                    "limit": min(limit, 500),
+                    "startTime": current_since,
+                }
 
-            records = await exchange.fapiDataGetOpenInterestHist(params)
-            if not records:
-                break
-            all_records.extend(records)
-            current_since = int(records[-1]["timestamp"]) + 1
-            logger.info("Fetched %d open interest records", len(records))
-            if len(records) < limit:
-                break
-            await asyncio.sleep(exchange.rateLimit / 1000)
+                records = await prod_exchange.fapiDataGetOpenInterestHist(params)
+                if not records:
+                    break
+                all_records.extend(records)
+                current_since = int(records[-1]["timestamp"]) + 1
+                logger.info("Fetched %d open interest records", len(records))
+                if len(records) < limit:
+                    break
+                await asyncio.sleep(prod_exchange.rateLimit / 1000)
+        finally:
+            await prod_exchange.close()
 
         if not all_records:
             return pd.DataFrame(columns=["sumOpenInterest", "sumOpenInterestValue"])

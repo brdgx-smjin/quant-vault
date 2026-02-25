@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config.settings import DATA_DIR, SYMBOL, TIMEFRAMES
 from src.data.collector import BinanceCollector
-from src.data.preprocessor import DataPreprocessor
+from src.data.preprocessor import DataPreprocessor, RETENTION_DAYS
 from src.monitoring.logger import setup_logging
 
 
@@ -95,6 +95,12 @@ async def incremental_update(
                 combined = new_df
 
             combined = preprocessor.clean_ohlcv(combined)
+
+            # Rolling window trim
+            max_days = RETENTION_DAYS.get(tf)
+            if max_days:
+                combined = preprocessor.trim_to_period(combined, max_days)
+
             combined = preprocessor.add_returns(combined)
 
             combined.to_parquet(path)
@@ -131,6 +137,12 @@ async def full_collection(
 
             df = await collector.fetch_historical(timeframe=tf, days=days)
             df = preprocessor.clean_ohlcv(df)
+
+            # Rolling window trim
+            max_days = RETENTION_DAYS.get(tf)
+            if max_days:
+                df = preprocessor.trim_to_period(df, max_days)
+
             df = preprocessor.add_returns(df)
 
             df.to_parquet(path)
@@ -180,6 +192,12 @@ async def extend_history(
                 combined = df
 
             combined = preprocessor.clean_ohlcv(combined)
+
+            # Rolling window trim
+            max_days = RETENTION_DAYS.get(tf)
+            if max_days:
+                combined = preprocessor.trim_to_period(combined, max_days)
+
             combined = preprocessor.add_returns(combined)
 
             combined.to_parquet(path)
@@ -188,6 +206,79 @@ async def extend_history(
         except Exception:
             logger.exception("Failed to extend %s data", tf)
             success = False
+
+    return success
+
+
+async def collect_derivatives(
+    collector: BinanceCollector,
+    logger,
+) -> bool:
+    """Collect funding rate and open interest data.
+
+    Returns:
+        True if all derivatives data collected successfully, False otherwise.
+    """
+    success = True
+    symbol_safe = SYMBOL.replace("/", "_").replace(":", "_")
+
+    # --- Funding Rate ---
+    fr_path = f"{DATA_DIR}/processed/{symbol_safe}_funding_rate.parquet"
+    logger.info("=== Collecting funding rate data ===")
+    try:
+        since_ms = None
+        existing_fr = pd.DataFrame()
+        if Path(fr_path).exists():
+            existing_fr = pd.read_parquet(fr_path)
+            if not existing_fr.empty:
+                since_ms = int(existing_fr.index.max().timestamp() * 1000)
+                logger.info("Funding rate: existing %d rows, last=%s", len(existing_fr), existing_fr.index.max())
+
+        new_fr = await collector.fetch_funding_rate(since=since_ms)
+        if not new_fr.empty:
+            if not existing_fr.empty:
+                combined = pd.concat([existing_fr, new_fr])
+                combined = combined[~combined.index.duplicated(keep="last")]
+                combined = combined.sort_index()
+            else:
+                combined = new_fr
+            combined.to_parquet(fr_path)
+            logger.info("Funding rate: saved %d rows, start=%s, end=%s",
+                        len(combined), combined.index.min(), combined.index.max())
+        else:
+            logger.info("No new funding rate data")
+    except Exception:
+        logger.exception("Failed to collect funding rate data")
+        success = False
+
+    # --- Open Interest ---
+    oi_path = f"{DATA_DIR}/processed/{symbol_safe}_open_interest_1h.parquet"
+    logger.info("=== Collecting open interest data ===")
+    try:
+        since_ms = None
+        existing_oi = pd.DataFrame()
+        if Path(oi_path).exists():
+            existing_oi = pd.read_parquet(oi_path)
+            if not existing_oi.empty:
+                since_ms = int(existing_oi.index.max().timestamp() * 1000)
+                logger.info("Open interest: existing %d rows, last=%s", len(existing_oi), existing_oi.index.max())
+
+        new_oi = await collector.fetch_open_interest(timeframe="1h", since=since_ms)
+        if not new_oi.empty:
+            if not existing_oi.empty:
+                combined = pd.concat([existing_oi, new_oi])
+                combined = combined[~combined.index.duplicated(keep="last")]
+                combined = combined.sort_index()
+            else:
+                combined = new_oi
+            combined.to_parquet(oi_path)
+            logger.info("Open interest: saved %d rows, start=%s, end=%s",
+                        len(combined), combined.index.min(), combined.index.max())
+        else:
+            logger.info("No new open interest data")
+    except Exception:
+        logger.exception("Failed to collect open interest data")
+        success = False
 
     return success
 
@@ -213,6 +304,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--cron", action="store_true",
         help="Cron mode: log only, exit code 1 on error",
+    )
+    parser.add_argument(
+        "--no-derivatives", action="store_true",
+        help="Skip funding rate and open interest collection",
     )
     return parser.parse_args()
 
@@ -253,6 +348,11 @@ async def main() -> None:
             success = await full_collection(collector, preprocessor, timeframes, args.days, logger)
         else:
             success = await incremental_update(collector, preprocessor, timeframes, logger)
+
+        # Collect derivatives data (funding rate, open interest)
+        if not args.no_derivatives:
+            deriv_success = await collect_derivatives(collector, logger)
+            success = success and deriv_success
     finally:
         await collector.close()
 

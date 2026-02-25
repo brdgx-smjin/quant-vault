@@ -102,6 +102,9 @@ class TradingEngine:
         balance = await self.executor.get_balance()
         logger.info("Account balance: %s USDT", balance)
 
+        # Sync with any existing positions on Binance
+        await self._sync_positions()
+
         await self.alerter.alert(
             f"🚀 **TradingEngine Started**\n"
             f"Symbol: {self.symbol} | TF: {self.timeframe}\n"
@@ -156,12 +159,15 @@ class TradingEngine:
     def _rebuild_htf(self) -> None:
         """Resample base-TF data to higher timeframe and add indicators."""
         self.df_htf = DataPreprocessor.resample(self.df, self.htf_timeframe)
-        htf_ohlcv = self.df_htf[["open", "high", "low", "close", "volume"]]
+        htf_ohlcv = self.df_htf[["open", "high", "low", "close", "volume"]].copy()
+        # Deduplicate HTF index to prevent InvalidIndexError in add_all concat
+        if htf_ohlcv.index.duplicated().any():
+            logger.warning("HTF duplicate index detected, deduplicating")
+            htf_ohlcv = htf_ohlcv[~htf_ohlcv.index.duplicated(keep="last")]
         self.df_htf = BasicIndicators.add_all(htf_ohlcv)
 
     async def _on_candle_close(self, kline: dict) -> None:
         """Process a closed candle: update data, generate signal, execute."""
-        # Append new candle to DataFrame (or update if timestamp already exists)
         ts = pd.Timestamp(int(kline["t"]), unit="ms")
         row_data = {
             "open": float(kline["o"]),
@@ -171,14 +177,16 @@ class TradingEngine:
             "volume": float(kline["v"]),
         }
 
-        # Strip to OHLCV first — prevents stale indicator columns and
-        # duplicate column names from prior add_all() pd.concat calls
+        # Strip to OHLCV — prevents stale indicator columns and
+        # duplicate column names from prior add_all() pd.concat(axis=1)
         ohlcv_cols = ["open", "high", "low", "close", "volume"]
         self.df = self.df[ohlcv_cols].copy()
 
-        # Deduplicate index to prevent pd.concat InvalidIndexError
+        # Deduplicate index BEFORE any operation to prevent InvalidIndexError
+        # in both pd.concat and BasicIndicators.add_all (which uses axis=1 concat)
         if self.df.index.duplicated().any():
-            logger.warning("Duplicate index detected, deduplicating (keeping last)")
+            logger.warning("Duplicate index detected (%d dupes), deduplicating",
+                           self.df.index.duplicated().sum())
             self.df = self.df[~self.df.index.duplicated(keep="last")]
 
         # Update existing row or append new one
@@ -186,15 +194,23 @@ class TradingEngine:
             for col, val in row_data.items():
                 self.df.at[ts, col] = val
         else:
-            new_row = pd.DataFrame([row_data], index=[ts])
+            new_row = pd.DataFrame([row_data], index=pd.DatetimeIndex([ts]))
             self.df = pd.concat([self.df, new_row])
 
         # Bound DataFrame to prevent memory growth
         if len(self.df) > MAX_DF_BARS:
             self.df = self.df.iloc[-MAX_DF_BARS:]
 
+        # Sort index to ensure monotonic order after append
+        if not self.df.index.is_monotonic_increasing:
+            self.df = self.df.sort_index()
+
         # Recalculate all indicators on clean OHLCV data
         self.df = BasicIndicators.add_all(self.df)
+
+        # Safety: ensure no duplicate index after add_all (pandas-ta edge case)
+        if self.df.index.duplicated().any():
+            self.df = self.df[~self.df.index.duplicated(keep="last")]
 
         close = float(kline["c"])
         logger.info("Candle closed: %s | close=%.2f | bars=%d",
@@ -202,6 +218,9 @@ class TradingEngine:
 
         # Daily PnL reset at UTC midnight
         await self._check_daily_reset()
+
+        # Sync local positions with Binance (detect external trades)
+        await self._sync_positions()
 
         # Update unrealized PnL for open positions
         self.position_manager.update_unrealized_pnl(
@@ -241,8 +260,65 @@ class TradingEngine:
         if signal.signal in (Signal.LONG, Signal.SHORT):
             await self._execute_signal(signal)
 
+    @staticmethod
+    def _build_signal_reason(signal) -> str:
+        """Build human-readable reason from signal metadata if reason is empty.
+
+        Args:
+            signal: TradeSignal with metadata dict.
+
+        Returns:
+            Reason string (original if non-empty, otherwise generated).
+        """
+        if signal.reason:
+            return signal.reason
+
+        meta = signal.metadata
+        strategy = meta.get("strategy", "")
+        parts: list[str] = []
+
+        # VWAP mean reversion
+        if "z_score" in meta:
+            z = meta["z_score"]
+            direction = "하단" if z < 0 else "상단"
+            parts.append(f"VWAP-{abs(z):.1f}σ {direction} 터치")
+        if "rsi" in meta:
+            parts.append(f"RSI {meta['rsi']:.1f}")
+
+        # BB squeeze breakout
+        if "squeeze" in meta:
+            parts.append("BB Squeeze 돌파")
+        if "bb_width" in meta:
+            parts.append(f"BB폭={meta['bb_width']:.4f}")
+
+        # MTF trend info
+        if "htf_trend" in meta:
+            parts.append(f"4h 트렌드 {meta['htf_trend']}")
+
+        if not parts:
+            return strategy or ""
+
+        return " + ".join(parts)
+
     async def _execute_signal(self, signal) -> None:
         """Check risk, execute order, record position."""
+        # Enrich signal reason from metadata if strategy didn't provide one
+        signal.reason = self._build_signal_reason(signal)
+
+        # Append HTF trend info to reason if available
+        if self.df_htf is not None and len(self.df_htf) >= 2:
+            ema20 = self.df_htf["ema_20"].iloc[-1]
+            ema50 = self.df_htf["ema_50"].iloc[-1]
+            if not (pd.isna(ema20) or pd.isna(ema50)):
+                trend = "상방" if float(ema20) > float(ema50) else "하방"
+                signal.reason += f" + 4h EMA 트렌드 {trend}"
+
+        # Check daily trade limit
+        if self.dashboard.is_daily_limit_reached():
+            logger.warning("Daily trade limit reached (%d), skipping signal",
+                           self.dashboard._daily_trade_count)
+            return
+
         balance = await self.executor.get_balance()
         risk_check = self.risk_manager.check_trade(signal, balance)
 
@@ -328,7 +404,7 @@ class TradingEngine:
             size=float(risk_check.position_size),
             confidence=signal.confidence,
             strategy=signal.metadata.get("strategy", self.strategy.name),
-            reason=getattr(signal, "reason", ""),
+            reason=signal.reason,
             risk_pct=risk_pct,
         )
 
@@ -564,17 +640,37 @@ class TradingEngine:
             self._last_daily_reset = now
             logger.info("Daily PnL reset at %s", now)
 
-    async def _heartbeat(self) -> None:
-        """Periodic heartbeat log."""
+    async def _sync_positions(self) -> None:
+        """Sync local position state with actual Binance positions."""
         try:
+            exchange_positions = await self.executor.get_positions()
+            changes = self.position_manager.sync_from_exchange(exchange_positions)
+            if changes:
+                msg = "🔄 **포지션 동기화**\n" + "\n".join(changes)
+                logger.info("[SYNC] %s", changes)
+                await self.alerter.alert(msg)
+        except Exception:
+            logger.exception("Position sync failed (non-fatal)")
+
+    async def _heartbeat(self) -> None:
+        """Periodic heartbeat + position sync every 30s."""
+        try:
+            tick = 0
             while self._running:
-                await asyncio.sleep(300)  # 5 minutes
-                metrics = self.dashboard.get_metrics()
-                logger.info(
-                    "Heartbeat — PnL: %s | Trades: %d | Positions: %d",
-                    metrics.total_pnl, metrics.total_trades,
-                    len(self.position_manager.positions),
-                )
+                await asyncio.sleep(30)
+                tick += 1
+
+                # Sync positions every 30s
+                await self._sync_positions()
+
+                # Full heartbeat log every 5 minutes (10 ticks)
+                if tick % 10 == 0:
+                    metrics = self.dashboard.get_metrics()
+                    logger.info(
+                        "Heartbeat — PnL: %s | Trades: %d | Positions: %d",
+                        metrics.total_pnl, metrics.total_trades,
+                        len(self.position_manager.positions),
+                    )
         except asyncio.CancelledError:
             logger.debug("Heartbeat task cancelled")
             return

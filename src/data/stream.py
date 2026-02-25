@@ -23,6 +23,9 @@ WS_TESTNET = "wss://stream.binancefuture.com/ws"
 class BinanceStream:
     """Real-time WebSocket stream for Binance Futures."""
 
+    _BASE_RECONNECT_DELAY = 5
+    _MAX_RECONNECT_DELAY = 60
+
     def __init__(
         self,
         symbol: str = SYMBOL,
@@ -36,6 +39,7 @@ class BinanceStream:
         self.on_candle = on_candle
         self.on_trade = on_trade
         self._running = False
+        self._reconnect_count = 0
 
     async def start_kline_stream(self, timeframe: str = "1m") -> None:
         """Subscribe to kline/candlestick stream.
@@ -52,16 +56,28 @@ class BinanceStream:
         while self._running:
             try:
                 async with websockets.connect(url, ssl=ssl_ctx) as ws:
-                    logger.info("Connected to %s", url)
+                    logger.info("Connected to %s (reconnects=%d)",
+                                url, self._reconnect_count)
+                    self._reconnect_count = 0  # Reset on successful connection
                     async for msg in ws:
                         if not self._running:
                             break
                         data = json.loads(msg)
                         if self.on_candle and data.get("e") == "kline":
                             await self.on_candle(data["k"])
+            except asyncio.CancelledError:
+                break
             except Exception:
-                logger.exception("WebSocket error, reconnecting in 5s")
-                await asyncio.sleep(5)
+                self._reconnect_count += 1
+                delay = min(
+                    self._BASE_RECONNECT_DELAY * (2 ** min(self._reconnect_count - 1, 4)),
+                    self._MAX_RECONNECT_DELAY,
+                )
+                logger.exception(
+                    "WebSocket error (attempt #%d), reconnecting in %ds",
+                    self._reconnect_count, delay,
+                )
+                await asyncio.sleep(delay)
 
     def stop(self) -> None:
         """Stop the WebSocket stream."""

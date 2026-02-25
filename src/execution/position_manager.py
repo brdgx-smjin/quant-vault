@@ -116,6 +116,69 @@ class PositionManager:
         else:
             pos.unrealized_pnl = (pos.entry_price - current_price) * pos.amount
 
+    def sync_from_exchange(self, exchange_positions: list[dict]) -> list[str]:
+        """Sync local state with actual Binance positions.
+
+        Args:
+            exchange_positions: List of position dicts from BinanceExecutor.get_positions().
+
+        Returns:
+            List of human-readable change descriptions.
+        """
+        changes: list[str] = []
+
+        # Build map of exchange positions: symbol -> position dict
+        remote: dict[str, dict] = {}
+        for p in exchange_positions:
+            sym = p.get("symbol", "")
+            remote[sym] = p
+
+        # 1. Remote exists but local doesn't → add to local
+        for sym, p in remote.items():
+            contracts = Decimal(str(p.get("contracts", 0)))
+            if contracts <= 0:
+                continue
+            side = (p.get("side") or "long").lower()  # "long" or "short"
+            entry = Decimal(str(p.get("entryPrice") or 0))
+            leverage = int(p.get("leverage") or 5)
+
+            if sym not in self.positions:
+                self.positions[sym] = Position(
+                    symbol=sym,
+                    side=side,
+                    entry_price=entry,
+                    amount=contracts,
+                    leverage=leverage,
+                )
+                changes.append(
+                    f"외부 포지션 감지: {side.upper()} {sym} {contracts} @ {entry}"
+                )
+                logger.info("Synced external position: %s %s %s @ %s", side, sym, contracts, entry)
+            else:
+                local = self.positions[sym]
+                # Update amount if it changed (partial close externally, etc.)
+                if local.amount != contracts or local.side != side:
+                    old_desc = f"{local.side.upper()} {local.amount}"
+                    local.side = side
+                    local.amount = contracts
+                    local.entry_price = entry
+                    local.leverage = leverage
+                    changes.append(
+                        f"포지션 변경 감지: {sym} {old_desc} → {side.upper()} {contracts} @ {entry}"
+                    )
+                    logger.info("Synced position change: %s -> %s %s @ %s", sym, side, contracts, entry)
+
+        # 2. Local exists but remote doesn't → position was closed externally
+        closed_symbols = [sym for sym in self.positions if sym not in remote]
+        for sym in closed_symbols:
+            pos = self.positions.pop(sym)
+            changes.append(
+                f"외부 청산 감지: {pos.side.upper()} {sym} {pos.amount} @ {pos.entry_price}"
+            )
+            logger.info("Synced external close: %s %s", pos.side, sym)
+
+        return changes
+
     def get_total_exposure(self) -> Decimal:
         """Get total position exposure in USDT."""
         return sum(

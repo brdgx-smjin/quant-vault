@@ -2,6 +2,16 @@
 
 Uses rolling VWAP with standard deviation bands.
 Entry when price deviates significantly from VWAP, targeting reversion.
+MUST use with MultiTimeframeFilter(4h EMA) for reliability.
+
+Walk-Forward results (1h, with MTF 4h filter):
+  Phase 10 (5w):  80% robustness, OOS +8.91%, Full +152% (overfitted), DD 11%
+  Phase 10 (7w):  71% robustness, OOS +3.28%
+  Phase 10 (9w):  67% robustness, OOS +11.55%
+  Standalone (no MTF): 60% rob, OOS -1.48%, DD 40% — COLLAPSES
+
+Best config: vwap_period=24, band_mult=2.0, rsi=35, sl=2.0, cool=4.
+Always use with MTF(4h EMA). Full return (~152%) likely overfitted.
 """
 
 from __future__ import annotations
@@ -23,12 +33,11 @@ class VWAPMeanReversionStrategy(BaseStrategy):
     TP target: VWAP (mean reversion).
     SL: ATR-based.
 
-    Walk-Forward results (Phase 9, 1h):
-      Standalone VWAP_24_2.0 (5w): 60% robustness, OOS -1.48%, DD 40%
-      Standalone VWAP_24_2.0 (7w): 28% robustness — collapses without MTF
-      VWAP_24_2.0+MTF (5w): 80% robustness, OOS +8.91%, Full +152%, DD 11%
-      VWAP_24_2.0+MTF (7w): 71% robustness, OOS +3.28%
-      VWAP_48_2.0+MTF (5w): 60% robustness, OOS +9.03%
+    Walk-Forward results (Phase 10, 1h, with MTF 4h filter):
+      5w: 80% robustness, OOS +8.91%, Full +152% (overfitted), DD 11%, PF 2.71
+      7w: 71% robustness, OOS +3.28%
+      9w: 67% robustness, OOS +11.55%
+      Standalone (no MTF): collapses — 60% rob, OOS -1.48%, DD 40%
 
     Best config: vwap_period=24, band_mult=2.0, rsi=35, sl=2.0, cool=4.
     Always use with MTF(4h EMA). Full return (~152%) likely overfitted.

@@ -1,12 +1,15 @@
 """RSI mean-reversion strategy with Bollinger Band confirmation.
 
-Walk-Forward results (1h):
-  Standalone (5w): 40-60% robustness, OOS -3 to -18% — unreliable alone
-  With MTF 4h (5w): 60% robustness, RSI_35_65 OOS +13.98%, RSI_30_70 +8.88%
-  With MTF 4h (7w): 57% robustness, RSI_35_65 OOS +14.64%
+MUST use with MultiTimeframeFilter(4h EMA) for reliability.
 
-Warning: Full-period returns are 140-150% — suspicious overfitting.
-WF OOS returns are valid. Always use with MTF filter for reliable results.
+Walk-Forward results (1h, with MTF 4h filter):
+  Phase 10 (5w):  60% robustness, OOS +13.46%, Full +148% (overfitted)
+  Phase 10 (7w):  71% robustness, OOS +10.52%
+  Phase 10 (9w):  78% robustness, OOS +20.59% — **BEST SINGLE STRATEGY**
+  Standalone (no MTF): 40% rob, OOS -3 to -18% — FAILS
+
+Key finding: RSI+MTF gets MORE robust at higher window counts (78% at 9w).
+Full-period returns (140-150%) are overfitted — rely on WF OOS only.
 Best config: rsi_oversold=35, rsi_overbought=65, atr_sl=2.0, atr_tp=3.0.
 """
 

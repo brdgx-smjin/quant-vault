@@ -1,15 +1,17 @@
 """BB Squeeze Breakout v3 — candle body filter + session time filter.
 
-DEPRECATED: All v3 filters degraded OOS performance vs baseline v1/v2.
-Phase 6 WF results (5-window, 1h):
-  - Body>40%: OOS -0.70%, Robustness 40% (worse than baseline +1.14%, 60%)
+DEPRECATED — DO NOT USE IN PRODUCTION.
+
+All v3 entry-quality filters degraded OOS performance vs baseline v1/v2:
+  - Body>40%: OOS -0.70%, Robustness 40% (worse than baseline +5.71%, 60%)
   - Body>50%: OOS -3.10%, Robustness 20%
   - Body>60%: OOS +1.27%, Robustness 20%
   - NoAsianLate: OOS +1.01%, Robustness 60% (same as baseline, not better)
   - USEuroOnly: OOS +0.41%, Robustness 60%
   - Combined Body+Session+BE: all worse than baseline
 
-Use BBSqueezeBreakoutStrategy (v1) or BBSqueezeV2Strategy instead.
+Use BBSqueezeBreakoutStrategy from bb_squeeze_breakout.py instead.
+Kept for historical reference only.
 """
 
 from __future__ import annotations

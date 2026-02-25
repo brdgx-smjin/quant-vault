@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Live paper trading bot entry point.
 
-Runs the TradingEngine with Fib+TrendFilter strategy on Binance testnet.
-Fib+TrendFilter was selected as it has the highest Walk-Forward robustness (67%).
+Runs the TradingEngine with VWAP+MTF strategy on Binance testnet.
+VWAP_24_2.0+MTF selected: WF robustness 80% (5w), OOS +8.91%, DD 11%.
 Hard safety abort if TESTNET=false to prevent accidental real-money trading.
 """
 
@@ -20,8 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config.settings import SYMBOL, TESTNET
 from src.execution.trading_engine import TradingEngine
 from src.monitoring.logger import setup_logging
-from src.strategy.fibonacci_retracement import FibonacciRetracementStrategy
 from src.strategy.mtf_filter import MultiTimeframeFilter
+from src.strategy.vwap_mean_reversion import VWAPMeanReversionStrategy
 
 logger = setup_logging("live")
 
@@ -41,20 +41,20 @@ logger.propagate = False
 
 
 def build_strategy() -> MultiTimeframeFilter:
-    """Build the Fib+TrendFilter strategy with 4h MTF filter.
+    """Build the VWAP+MTF strategy with 4h EMA trend filter.
 
     Returns:
-        MultiTimeframeFilter wrapping FibonacciRetracementStrategy.
+        MultiTimeframeFilter wrapping VWAPMeanReversionStrategy.
     """
-    base = FibonacciRetracementStrategy(
-        entry_levels=(0.5, 0.618),
-        tolerance_pct=0.05,
-        lookback=50,
+    base = VWAPMeanReversionStrategy(
+        vwap_period=24,
+        band_mult=1.5,
+        rsi_threshold=40.0,
         atr_sl_mult=2.0,
-        require_trend=True,
+        cooldown_bars=2,
     )
     strategy = MultiTimeframeFilter(base)
-    logger.info("Strategy: %s (ATR SL=2.0x, 4h MTF filter)", strategy.name)
+    logger.info("Strategy: %s (VWAP24+1.5σ, RSI40, SL=2ATR, cool=2, 4h MTF)", strategy.name)
     return strategy
 
 
@@ -68,9 +68,9 @@ async def main() -> None:
         sys.exit(1)
 
     logger.info("=" * 60)
-    logger.info("  LIVE PAPER TRADING — %s | 30m + 4h MTF", SYMBOL)
+    logger.info("  LIVE PAPER TRADING — %s | 1h + 4h MTF", SYMBOL)
     logger.info("  Mode: TESTNET (paper trading)")
-    logger.info("  Strategy: Fib+TrendFilter + MTF (ATR SL=2.0x)")
+    logger.info("  Strategy: VWAP_24_1.5 + MTF (RSI40, SL=2ATR, cool=2)")
     logger.info("=" * 60)
     logger.info("")
 
@@ -78,7 +78,7 @@ async def main() -> None:
     engine = TradingEngine(
         strategy=strategy,
         symbol=SYMBOL,
-        timeframe="30m",
+        timeframe="1h",
         testnet=True,
         warmup_bars=200,
         htf_timeframe="4h",

@@ -110,8 +110,8 @@ class RiskManager:
         max_position = max_notional / price
         position_size = min(position_size, max_position)
 
-        # Binance minimum notional check (~$5 USDT)
-        min_notional = Decimal("5")
+        # Binance futures minimum notional ($100 on testnet, ~$5 mainnet)
+        min_notional = Decimal("100")
         notional_value = position_size * price
         if notional_value < min_notional:
             return RiskCheckResult(

@@ -23,15 +23,25 @@ class DashboardMetrics:
     current_drawdown: float = 0.0
     consecutive_losses: int = 0
     daily_trade_count: int = 0
+    max_consecutive_losses: int = 0
+    drawdown_recovery_trades: int = 0  # Trades since max DD to recovery
 
 
 class DashboardProvider:
     """Provides metrics for monitoring dashboard (Grafana / CLI)."""
 
-    def __init__(self, initial_equity: Decimal = Decimal("10000")) -> None:
+    # Default daily trade limit (can be overridden via constructor)
+    DEFAULT_DAILY_TRADE_LIMIT = 20
+
+    def __init__(
+        self,
+        initial_equity: Decimal = Decimal("10000"),
+        daily_trade_limit: int = DEFAULT_DAILY_TRADE_LIMIT,
+    ) -> None:
         self.trades: list[dict] = []
         self.daily_pnl = Decimal("0")
         self._daily_trade_count = 0
+        self._daily_trade_limit = daily_trade_limit
 
         # Equity curve tracking
         self._initial_equity = initial_equity
@@ -40,6 +50,9 @@ class DashboardProvider:
         self._max_drawdown: float = 0.0
         self._returns: list[float] = []
         self._consecutive_losses = 0
+        self._max_consecutive_losses = 0
+        self._dd_start_trade: Optional[int] = None  # Trade index when DD started
+        self._max_drawdown_recovery_trades = 0
 
     def record_trade(self, pnl: Decimal, metadata: dict) -> None:
         """Record a completed trade and update equity curve."""
@@ -52,14 +65,26 @@ class DashboardProvider:
             self._consecutive_losses += 1
         else:
             self._consecutive_losses = 0
+        if self._consecutive_losses > self._max_consecutive_losses:
+            self._max_consecutive_losses = self._consecutive_losses
 
         # Update equity curve
         current_equity = self._equity_curve[-1] + float(pnl)
         self._equity_curve.append(current_equity)
 
         # Update peak and max drawdown
-        if current_equity > self._peak_equity:
+        if current_equity >= self._peak_equity:
+            # New peak — record recovery trades if we were in a drawdown
+            if self._dd_start_trade is not None:
+                recovery = len(self.trades) - self._dd_start_trade
+                if recovery > self._max_drawdown_recovery_trades:
+                    self._max_drawdown_recovery_trades = recovery
+                self._dd_start_trade = None
             self._peak_equity = current_equity
+        else:
+            # In drawdown — mark start trade if not already tracking
+            if self._dd_start_trade is None:
+                self._dd_start_trade = len(self.trades) - 1
         drawdown = (self._peak_equity - current_equity) / self._peak_equity if self._peak_equity > 0 else 0.0
         if drawdown > self._max_drawdown:
             self._max_drawdown = drawdown
@@ -68,6 +93,10 @@ class DashboardProvider:
         prev_equity = self._equity_curve[-2]
         if prev_equity > 0:
             self._returns.append(float(pnl) / prev_equity)
+
+    def is_daily_limit_reached(self) -> bool:
+        """Check if the daily trade count has reached the limit."""
+        return self._daily_trade_count >= self._daily_trade_limit
 
     def reset_daily(self) -> None:
         """Reset daily PnL counter (call at UTC midnight)."""
@@ -85,6 +114,8 @@ class DashboardProvider:
                 current_drawdown=self.current_drawdown,
                 consecutive_losses=0,
                 daily_trade_count=0,
+                max_consecutive_losses=0,
+                drawdown_recovery_trades=0,
             )
 
         total_pnl = sum(t["pnl"] for t in self.trades)
@@ -103,6 +134,8 @@ class DashboardProvider:
             current_drawdown=self.current_drawdown,
             consecutive_losses=self._consecutive_losses,
             daily_trade_count=self._daily_trade_count,
+            max_consecutive_losses=self._max_consecutive_losses,
+            drawdown_recovery_trades=self._max_drawdown_recovery_trades,
         )
 
     def _calculate_sharpe(self, annualization_factor: float = 365 * 6) -> float:

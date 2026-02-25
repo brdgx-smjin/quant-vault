@@ -1,15 +1,25 @@
-"""Bollinger Band Squeeze Breakout strategy with volume and trend confirmation.
+"""Bollinger Band Squeeze Breakout strategy — canonical production version.
 
-The canonical BBSqueeze strategy. Best single strategy across all phases.
+Detects periods of low volatility (narrow BB width / squeeze) and enters
+when price breaks out with volume and momentum confirmation.
 
 Walk-Forward results (1h, with MTF 4h filter, require_trend=False):
-  Phase 4-6 (5w): 60% robustness, OOS +1.14%, Full +15.54%, DD 16%, PF 1.42
-  Phase 6 (7w):   57% robustness, OOS +9.58%, Full +15.54%
-  Phase 9 (5w):   60% robustness, OOS +5.71%, Full +25.97%, DD 10.3%, PF 2.31
+  Phase 10 (5w):  60% robustness, OOS +5.71%, Full +25.97%, DD 10.3%, PF 2.31
+  Phase 10 (7w):  42% robustness, OOS +5.52%
+  Phase 10 (9w):  33% robustness, OOS -0.57% — degrades at high window counts
+
+Note: BBSqueeze becomes unreliable at 9w WF. Use RSI_MR+MTF or VWAP_MR+MTF
+for higher-window robustness. BB remains useful as a portfolio diversifier
+due to negative correlation with mean-reversion strategies.
 
 Optimal params: squeeze_pctile=25, vol_mult=1.1, atr_sl_mult=3.0,
     rr_ratio=2.0, cooldown_bars=6, require_trend=False.
-Always use with MultiTimeframeFilter(4h EMA) for best robustness.
+Always use with MultiTimeframeFilter(4h EMA).
+
+Tested and REJECTED enhancements (Phase 5):
+  - ADX filter (adx_threshold>0): 60% rob but OOS -1.09% — NOT helpful
+  - Trailing stop (disable_tp): 40% rob — worse
+  - Candle body filter, session filter (v3): all degraded OOS — see bb_squeeze_v3.py
 """
 
 from __future__ import annotations
@@ -32,6 +42,7 @@ class BBSqueezeBreakoutStrategy(BaseStrategy):
       - Close > upper BB (breakout)
       - Volume > vol_mult * 20-bar average volume
       - RSI > 50 (momentum confirms direction)
+      - ADX > adx_threshold (if enabled, 0 = disabled)
       - EMA_20 > EMA_50 (trend alignment, if require_trend=True)
 
     Entry (SHORT):
@@ -39,10 +50,11 @@ class BBSqueezeBreakoutStrategy(BaseStrategy):
       - Close < lower BB (breakout)
       - Volume > vol_mult * 20-bar average
       - RSI < 50
+      - ADX > adx_threshold (if enabled)
       - EMA_20 < EMA_50 (if require_trend=True)
 
     SL: Middle BB (SMA_20) or ATR-based, whichever is more protective.
-    TP: Entry +/- rr_ratio * risk distance.
+    TP: Entry +/- rr_ratio * risk distance (None if disable_tp=True).
     """
 
     name = "bb_squeeze_breakout"
@@ -51,11 +63,13 @@ class BBSqueezeBreakoutStrategy(BaseStrategy):
         self,
         squeeze_lookback: int = 100,
         squeeze_pctile: float = 25.0,
-        vol_mult: float = 1.3,
-        atr_sl_mult: float = 2.0,
-        rr_ratio: float = 2.5,
-        require_trend: bool = True,
-        cooldown_bars: int = 8,
+        vol_mult: float = 1.1,
+        atr_sl_mult: float = 3.0,
+        rr_ratio: float = 2.0,
+        require_trend: bool = False,
+        cooldown_bars: int = 6,
+        adx_threshold: float = 0.0,
+        disable_tp: bool = False,
         symbol: str = SYMBOL,
     ) -> None:
         self.squeeze_lookback = squeeze_lookback
@@ -65,6 +79,8 @@ class BBSqueezeBreakoutStrategy(BaseStrategy):
         self.rr_ratio = rr_ratio
         self.require_trend = require_trend
         self.cooldown_bars = cooldown_bars
+        self.adx_threshold = adx_threshold
+        self.disable_tp = disable_tp
         self.symbol = symbol
         self._last_entry_idx = -999
 
@@ -74,7 +90,7 @@ class BBSqueezeBreakoutStrategy(BaseStrategy):
         Args:
             df: OHLCV DataFrame with rsi_14, atr_14, ema_20, ema_50,
                 BBL_20_2.0_2.0, BBU_20_2.0_2.0, BBM_20_2.0_2.0,
-                BBB_20_2.0_2.0 (BB width).
+                BBB_20_2.0_2.0 (BB width). ADX_14 if adx_threshold > 0.
 
         Returns:
             TradeSignal.
@@ -117,8 +133,15 @@ class BBSqueezeBreakoutStrategy(BaseStrategy):
         bb_width = float(bb_width)
         volume = float(volume)
 
+        # --- ADX filter ---
+        if self.adx_threshold > 0:
+            adx_val = last.get("ADX_14")
+            if pd.isna(adx_val):
+                return self._hold(df)
+            if float(adx_val) < self.adx_threshold:
+                return self._hold(df)
+
         # --- Squeeze detection ---
-        # BB width (BBB) percentile over lookback
         bbw_col = "BBB_20_2.0_2.0"
         if bbw_col not in df.columns:
             return self._hold(df)
@@ -129,14 +152,11 @@ class BBSqueezeBreakoutStrategy(BaseStrategy):
             return self._hold(df)
 
         threshold = recent_bbw.quantile(self.squeeze_pctile / 100.0)
-        in_squeeze = bb_width <= threshold
-
-        if not in_squeeze:
+        if bb_width > threshold:
             return self._hold(df)
 
         # --- Volume confirmation ---
-        vol_col = "volume"
-        recent_vol = df[vol_col].iloc[-20:]
+        recent_vol = df["volume"].iloc[-20:]
         avg_vol = float(recent_vol.mean())
         if avg_vol <= 0 or volume < avg_vol * self.vol_mult:
             return self._hold(df)
@@ -148,16 +168,19 @@ class BBSqueezeBreakoutStrategy(BaseStrategy):
         else:
             uptrend = downtrend = True
 
-        # --- LONG breakout ---
-        if close > bb_upper and rsi > 50.0 and uptrend:
-            risk = max(close - bb_mid, atr * self.atr_sl_mult)
-            sl = close - risk
-            tp = close + risk * self.rr_ratio
-            confidence = min(1.0, 0.55 + (volume / avg_vol - 1.0) * 0.1)
+        # --- Compute SL/TP ---
+        def _make_signal(side: Signal, risk: float) -> TradeSignal:
+            if side == Signal.LONG:
+                sl = close - risk
+                tp = close + risk * self.rr_ratio if not self.disable_tp else None
+            else:
+                sl = close + risk
+                tp = close - risk * self.rr_ratio if not self.disable_tp else None
 
+            confidence = min(1.0, 0.55 + (volume / avg_vol - 1.0) * 0.1)
             self._last_entry_idx = current_idx
             return TradeSignal(
-                signal=Signal.LONG,
+                signal=side,
                 symbol=self.symbol,
                 price=close,
                 timestamp=ts,
@@ -171,36 +194,19 @@ class BBSqueezeBreakoutStrategy(BaseStrategy):
                     ),
                     "volume_ratio": volume / avg_vol,
                     "rsi": rsi,
-                    "trend": "up",
+                    "trend": "up" if side == Signal.LONG else "down",
                 },
             )
+
+        # --- LONG breakout ---
+        if close > bb_upper and rsi > 50.0 and uptrend:
+            risk = max(close - bb_mid, atr * self.atr_sl_mult)
+            return _make_signal(Signal.LONG, risk)
 
         # --- SHORT breakout ---
         if close < bb_lower and rsi < 50.0 and downtrend:
             risk = max(bb_mid - close, atr * self.atr_sl_mult)
-            sl = close + risk
-            tp = close - risk * self.rr_ratio
-            confidence = min(1.0, 0.55 + (volume / avg_vol - 1.0) * 0.1)
-
-            self._last_entry_idx = current_idx
-            return TradeSignal(
-                signal=Signal.SHORT,
-                symbol=self.symbol,
-                price=close,
-                timestamp=ts,
-                confidence=confidence,
-                stop_loss=sl,
-                take_profit=tp,
-                metadata={
-                    "strategy": self.name,
-                    "bb_width_pctile": float(
-                        (recent_bbw < bb_width).sum() / len(recent_bbw) * 100
-                    ),
-                    "volume_ratio": volume / avg_vol,
-                    "rsi": rsi,
-                    "trend": "down",
-                },
-            )
+            return _make_signal(Signal.SHORT, risk)
 
         return self._hold(df)
 
@@ -213,13 +219,10 @@ class BBSqueezeBreakoutStrategy(BaseStrategy):
         )
 
     def get_required_indicators(self) -> list[str]:
-        return [
-            "rsi_14",
-            "atr_14",
-            "ema_20",
-            "ema_50",
-            "BBL_20_2.0_2.0",
-            "BBU_20_2.0_2.0",
-            "BBM_20_2.0_2.0",
-            "BBB_20_2.0_2.0",
+        indicators = [
+            "rsi_14", "atr_14", "ema_20", "ema_50",
+            "BBL_20_2.0_2.0", "BBU_20_2.0_2.0", "BBM_20_2.0_2.0", "BBB_20_2.0_2.0",
         ]
+        if self.adx_threshold > 0:
+            indicators.append("ADX_14")
+        return indicators

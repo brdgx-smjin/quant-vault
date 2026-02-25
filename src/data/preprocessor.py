@@ -2,8 +2,24 @@
 
 from __future__ import annotations
 
+import logging
+from datetime import datetime, timedelta, timezone
+
 import pandas as pd
 import numpy as np
+
+logger = logging.getLogger(__name__)
+
+# Rolling window retention policy: max days per timeframe
+RETENTION_DAYS: dict[str, int] = {
+    "1m": 90,     # 3 months
+    "5m": 180,    # 6 months
+    "15m": 365,   # 1 year
+    "30m": 365,   # 1 year
+    "1h": 365,    # 1 year
+    "4h": 365,    # 1 year
+    "1d": 365,    # 1 year
+}
 
 
 class DataPreprocessor:
@@ -70,3 +86,34 @@ class DataPreprocessor:
         df["pct_return"] = df["close"].pct_change()
         df["log_return"] = np.log(df["close"] / df["close"].shift(1))
         return df
+
+    @staticmethod
+    def trim_to_period(df: pd.DataFrame, max_days: int) -> pd.DataFrame:
+        """Trim DataFrame to keep only data within the rolling window.
+
+        Args:
+            df: OHLCV DataFrame with DatetimeIndex.
+            max_days: Maximum number of days to retain.
+
+        Returns:
+            Trimmed DataFrame.
+        """
+        if df.empty:
+            return df
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=max_days)
+        # Handle timezone-naive index
+        if df.index.tz is None:
+            cutoff = cutoff.replace(tzinfo=None)
+
+        rows_before = len(df)
+        trimmed = df[df.index >= cutoff].copy()
+        rows_after = len(trimmed)
+        rows_removed = rows_before - rows_after
+
+        if rows_removed > 0:
+            logger.info(
+                "Trimmed %d rows (max_days=%d), new start: %s",
+                rows_removed, max_days, trimmed.index.min(),
+            )
+        return trimmed
