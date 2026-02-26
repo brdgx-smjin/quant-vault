@@ -340,9 +340,18 @@ class TradingEngine:
             logger.info("[PORTFOLIO] Position scaled by %.0f%% → size=%.4f",
                         portfolio_weight * 100, float(risk_check.position_size))
 
-        # Close any existing position first
+        # Handle existing position: skip if same direction, reverse if opposite
         if self.symbol in self.position_manager.positions:
-            await self._close_position(float(signal.price), "new_signal")
+            pos = self.position_manager.positions[self.symbol]
+            new_side = "long" if signal.signal == Signal.LONG else "short"
+            if pos.side == new_side:
+                logger.info(
+                    "[SKIP] Already %s — ignoring duplicate %s signal",
+                    pos.side.upper(), new_side.upper(),
+                )
+                return
+            # Opposite direction → close and reverse
+            await self._close_position(float(signal.price), "reverse_signal")
 
         side = OrderSide.BUY if signal.signal == Signal.LONG else OrderSide.SELL
         order = self.order_manager.create_market_order(
@@ -392,6 +401,9 @@ class TradingEngine:
                 "[PARTIAL TP] levels: %s",
                 [(f"{float(p):.2f}", f"{float(f)*100:.0f}%%") for p, f in tp_levels],
             )
+
+        # Persist SL/TP state for crash recovery
+        self.position_manager._save_state()
 
         metrics = self.dashboard.get_metrics()
         logger.info(
@@ -522,6 +534,9 @@ class TradingEngine:
         else:
             ret_pct = 0.0
 
+        # Persist state (SL may have moved to breakeven, amount changed)
+        self.position_manager._save_state()
+
         remaining = self.position_manager.positions[self.symbol].amount if self.symbol in self.position_manager.positions else Decimal("0")
         logger.info(
             "[PARTIAL TP%d] %s %s | %.0f%% closed @ %.2f | PnL=%+.2f | remaining=%s",
@@ -587,6 +602,9 @@ class TradingEngine:
             float(metrics.total_pnl), metrics.current_equity,
             metrics.current_drawdown * 100,
         )
+
+        # Persist state (position removed)
+        self.position_manager._save_state()
 
         self._closing = False
 
@@ -662,6 +680,13 @@ class TradingEngine:
             if changes:
                 msg = "🔄 **포지션 동기화**\n" + "\n".join(changes)
                 logger.info("[SYNC] %s", changes)
+                await self.alerter.alert(msg)
+
+            # Restore SL/TP from persisted state after sync
+            restored = self.position_manager.restore_sl_tp()
+            if restored:
+                msg = "🔄 **SL/TP 복원**\n" + "\n".join(restored)
+                logger.info("[RESTORE] %s", restored)
                 await self.alerter.alert(msg)
         except Exception:
             logger.exception("Position sync failed (non-fatal)")

@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from decimal import Decimal
+from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+STATE_FILE = Path("data/position_state.json")
 
 
 @dataclass
@@ -184,3 +188,96 @@ class PositionManager:
         return sum(
             pos.entry_price * pos.amount for pos in self.positions.values()
         )
+
+    def _save_state(self) -> None:
+        """Persist SL/TP/tp_levels to JSON for crash recovery."""
+        state: dict[str, dict] = {}
+        for sym, pos in self.positions.items():
+            tp_levels_ser = [
+                [str(price), str(frac)] for price, frac in pos.tp_levels
+            ]
+            state[sym] = {
+                "side": pos.side,
+                "entry_price": str(pos.entry_price),
+                "amount": str(pos.amount),
+                "leverage": pos.leverage,
+                "stop_loss": str(pos.stop_loss) if pos.stop_loss is not None else None,
+                "take_profit": str(pos.take_profit) if pos.take_profit is not None else None,
+                "tp_levels": tp_levels_ser,
+                "next_tp_idx": pos.next_tp_idx,
+            }
+        try:
+            STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            STATE_FILE.write_text(json.dumps(state, indent=2))
+            logger.debug("[STATE] Saved position state: %d positions", len(state))
+        except Exception:
+            logger.exception("[STATE] Failed to save position state")
+
+    def _load_state(self) -> dict:
+        """Load position metadata from JSON."""
+        if not STATE_FILE.exists():
+            return {}
+        try:
+            return json.loads(STATE_FILE.read_text())
+        except Exception:
+            logger.exception("[STATE] Failed to load position state")
+            return {}
+
+    def restore_sl_tp(self) -> list[str]:
+        """Restore SL/TP/tp_levels from JSON after sync_from_exchange().
+
+        Returns:
+            List of human-readable restoration descriptions.
+        """
+        saved = self._load_state()
+        if not saved:
+            return []
+
+        changes: list[str] = []
+        for sym, pos in self.positions.items():
+            if sym not in saved:
+                continue
+            s = saved[sym]
+
+            # Only restore if sides match (position hasn't flipped)
+            if s.get("side") != pos.side:
+                logger.warning(
+                    "[RESTORE] Side mismatch for %s: saved=%s, current=%s — skipping",
+                    sym, s.get("side"), pos.side,
+                )
+                continue
+
+            restored_fields: list[str] = []
+
+            if s.get("stop_loss") is not None and pos.stop_loss is None:
+                pos.stop_loss = Decimal(s["stop_loss"])
+                restored_fields.append(f"SL={s['stop_loss']}")
+
+            if s.get("take_profit") is not None and pos.take_profit is None:
+                pos.take_profit = Decimal(s["take_profit"])
+                restored_fields.append(f"TP={s['take_profit']}")
+
+            if s.get("tp_levels") and not pos.tp_levels:
+                pos.tp_levels = [
+                    (Decimal(p), Decimal(f)) for p, f in s["tp_levels"]
+                ]
+                pos.next_tp_idx = s.get("next_tp_idx", 0)
+                restored_fields.append(f"tp_levels={len(pos.tp_levels)}")
+
+            if restored_fields:
+                desc = f"[RESTORE] {sym}: {', '.join(restored_fields)}"
+                changes.append(desc)
+                logger.info(desc)
+
+        # Clean up saved state for positions that no longer exist
+        stale = [sym for sym in saved if sym not in self.positions]
+        if stale:
+            for sym in stale:
+                del saved[sym]
+            try:
+                STATE_FILE.write_text(json.dumps(saved, indent=2))
+                logger.info("[STATE] Cleaned stale entries: %s", stale)
+            except Exception:
+                logger.exception("[STATE] Failed to clean stale state")
+
+        return changes
