@@ -118,6 +118,10 @@ ROLE_PATHS: dict[str, list[str]] = {
     "execution-engineer": ["src/execution/", "src/monitoring/", "scripts/live_trading.py"],
 }
 
+ROLE_LOGS: dict[str, Path] = {
+    "data-engineer": LOG_DIR / "data_engineer.log",
+}
+
 PYTHON = str(PROJECT_ROOT / ".venv" / "bin" / "python")
 
 
@@ -143,10 +147,10 @@ def _build_daily_report() -> str:
 
         if commits:
             lines.append(f"커밋 (24h): {len(commits)}건")
-            for c in commits[:5]:
-                lines.append(f"  - {c}")
+            commit_list = "\n".join(commits[:5])
             if len(commits) > 5:
-                lines.append(f"  ... 외 {len(commits) - 5}건")
+                commit_list += f"\n... 외 {len(commits) - 5}건"
+            lines.append(f"```\n{commit_list}\n```")
         else:
             lines.append("커밋 (24h): 0건")
 
@@ -191,8 +195,50 @@ def _build_daily_report() -> str:
         except Exception:
             lines.append("리뷰: (실행 실패)")
 
+        # --- role-specific log (e.g. data collection) ---
+        log_path = ROLE_LOGS.get(role)
+        if log_path and log_path.exists():
+            try:
+                log_lines = log_path.read_text(errors="replace").splitlines()
+                cutoff = now_kst - datetime.timedelta(hours=24)
+
+                # Find last completion time (always show)
+                all_finished = [l for l in log_lines if "Finished at" in l or "updated successfully" in l]
+                last_ts_str = None
+                if all_finished:
+                    m_ts2 = re.search(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", all_finished[-1])
+                    if m_ts2:
+                        last_ts_str = m_ts2.group(1)
+
+                # Count recent (24h) events
+                recent: list[str] = []
+                for ll in reversed(log_lines):
+                    m_ts = re.match(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", ll)
+                    if m_ts:
+                        ts = datetime.datetime.strptime(m_ts.group(1), "%Y-%m-%d %H:%M:%S")
+                        ts = ts.replace(tzinfo=datetime.timezone(datetime.timedelta(hours=9)))
+                        if ts < cutoff:
+                            break
+                    recent.append(ll)
+
+                fetched = [l for l in recent if "Fetched" in l and "candles" in l]
+                errors = [l for l in recent if "[ERROR]" in l]
+                finished = [l for l in recent if "Finished at" in l or "updated successfully" in l]
+
+                if fetched or finished:
+                    lines.append(f"데이터 수집 (24h): {len(fetched)}건 fetch, {len(finished)}회 완료")
+                    if errors:
+                        lines.append(f"수집 에러: {len(errors)}건 \u26a0\ufe0f")
+                else:
+                    lines.append("데이터 수집 (24h): 없음")
+
+                if last_ts_str:
+                    lines.append(f"마지막 수집: {last_ts_str}")
+            except Exception:
+                pass
+
         # --- assemble section ---
-        if not commits and not owned:
+        if not commits and not owned and not (log_path and log_path.exists()):
             sections.append(f"\u2501\u2501\u2501 {role} \u2501\u2501\u2501\n(활동 없음)")
         else:
             sections.append(f"\u2501\u2501\u2501 {role} \u2501\u2501\u2501\n" + "\n".join(lines))
