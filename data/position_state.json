@@ -1,1 +1,27 @@
-{}
+{
+  "BTC/USDT:USDT:15m_mtf_rsi_mean_reversion": {
+    "symbol": "BTC/USDT:USDT",
+    "side": "short",
+    "entry_price": "65069.5",
+    "amount": "0.06616188820024742775032849490",
+    "leverage": 5,
+    "stop_loss": "65069.5",
+    "take_profit": "64074.289991833175",
+    "tp_levels": [
+      [
+        "64406.026661222120",
+        "0.5"
+      ],
+      [
+        "63996.00013785739016",
+        "0.3"
+      ],
+      [
+        "63332.52679907951016",
+        "0.2"
+      ]
+    ],
+    "next_tp_idx": 1,
+    "component_id": "15m_mtf_rsi_mean_reversion"
+  }
+}
