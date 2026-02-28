@@ -222,18 +222,17 @@ class TradingEngine:
         # Sync local positions with Binance (detect external trades)
         await self._sync_positions()
 
-        # Update unrealized PnL for open positions
+        # Update unrealized PnL for all open positions of this symbol
         self.position_manager.update_unrealized_pnl(
             self.symbol, Decimal(str(close))
         )
 
-        # Log open position status
-        if self.symbol in self.position_manager.positions:
-            pos = self.position_manager.positions[self.symbol]
+        # Log all component positions
+        for key, pos in self.position_manager.get_symbol_positions(self.symbol).items():
             logger.info(
-                "[POSITION] %s %s | entry=%.2f | uPnL=%.2f | SL=%s TP=%s",
-                pos.side.upper(), self.symbol, float(pos.entry_price),
-                float(pos.unrealized_pnl),
+                "[POSITION] %s %s [%s] | entry=%.2f | uPnL=%.2f | SL=%s TP=%s",
+                pos.side.upper(), self.symbol, pos.component_id or "default",
+                float(pos.entry_price), float(pos.unrealized_pnl),
                 f"{float(pos.stop_loss):.2f}" if pos.stop_loss else "N/A",
                 f"{float(pos.take_profit):.2f}" if pos.take_profit else "N/A",
             )
@@ -248,17 +247,26 @@ class TradingEngine:
                         self.df_htf["ema_20"].iloc[-1],
                         self.df_htf["ema_50"].iloc[-1])
 
-        # Generate signal
-        signal = self.strategy.generate_signal(self.df)
-        logger.info(
-            "[SIGNAL] %s | confidence=%.3f | strategy=%s | meta=%s",
-            signal.signal.value, signal.confidence,
-            signal.metadata.get("strategy", self.strategy.name),
-            {k: v for k, v in signal.metadata.items() if k != "strategy"},
-        )
+        # Generate signals — multi-position for cross-TF, single for legacy
+        if hasattr(self.strategy, "generate_signals"):
+            signals = self.strategy.generate_signals(self.df)
+        else:
+            sig = self.strategy.generate_signal(self.df)
+            signals = [sig] if sig.signal in (Signal.LONG, Signal.SHORT) else []
 
-        if signal.signal in (Signal.LONG, Signal.SHORT):
-            await self._execute_signal(signal)
+        if not signals:
+            logger.info("[SIGNAL] HOLD | strategy=%s", self.strategy.name)
+
+        for signal in signals:
+            logger.info(
+                "[SIGNAL] %s | confidence=%.3f | strategy=%s | component=%s | meta=%s",
+                signal.signal.value, signal.confidence,
+                signal.metadata.get("strategy", self.strategy.name),
+                signal.metadata.get("component_id", ""),
+                {k: v for k, v in signal.metadata.items() if k not in ("strategy", "component_id")},
+            )
+            if signal.signal in (Signal.LONG, Signal.SHORT):
+                await self._execute_signal(signal)
 
     @staticmethod
     def _build_signal_reason(signal) -> str:
@@ -340,18 +348,22 @@ class TradingEngine:
             logger.info("[PORTFOLIO] Position scaled by %.0f%% → size=%.4f",
                         portfolio_weight * 100, float(risk_check.position_size))
 
-        # Handle existing position: skip if same direction, reverse if opposite
-        if self.symbol in self.position_manager.positions:
-            pos = self.position_manager.positions[self.symbol]
+        # Determine position key for this component
+        component_id = signal.metadata.get("component_id", "")
+        position_key = self.position_manager.make_position_key(self.symbol, component_id)
+
+        # Handle existing position for THIS component: skip same dir, reverse opposite
+        if position_key in self.position_manager.positions:
+            pos = self.position_manager.positions[position_key]
             new_side = "long" if signal.signal == Signal.LONG else "short"
             if pos.side == new_side:
                 logger.info(
-                    "[SKIP] Already %s — ignoring duplicate %s signal",
-                    pos.side.upper(), new_side.upper(),
+                    "[SKIP] %s already %s — ignoring duplicate %s signal",
+                    component_id or self.symbol, pos.side.upper(), new_side.upper(),
                 )
                 return
-            # Opposite direction → close and reverse
-            await self._close_position(float(signal.price), "reverse_signal")
+            # Opposite direction → close this component and reverse
+            await self._close_position(position_key, float(signal.price), "reverse_signal")
 
         side = OrderSide.BUY if signal.signal == Signal.LONG else OrderSide.SELL
         order = self.order_manager.create_market_order(
@@ -379,11 +391,12 @@ class TradingEngine:
             leverage=risk_check.leverage,
             stop_loss=Decimal(str(signal.stop_loss)) if signal.stop_loss else None,
             take_profit=Decimal(str(signal.take_profit)) if signal.take_profit else None,
+            component_id=component_id,
         )
         self.risk_manager.open_positions += 1
 
         # Build partial TP levels for the position
-        pos = self.position_manager.positions[self.symbol]
+        pos = self.position_manager.positions[position_key]
         if signal.stop_loss and signal.take_profit and len(self._tp_rr_levels) > 1:
             entry = Decimal(str(signal.price))
             sl = Decimal(str(signal.stop_loss))
@@ -435,52 +448,65 @@ class TradingEngine:
         )
 
     async def _check_sl_tp(self, high: float, low: float) -> None:
-        """Monitor SL/TP on every candle tick with partial close support."""
-        if self._closing or self.symbol not in self.position_manager.positions:
+        """Monitor SL/TP on every candle tick with partial close support.
+
+        Iterates all component positions for this symbol.
+        Processes at most one SL/TP event per tick to avoid order conflicts.
+        """
+        if self._closing:
             return
 
-        pos = self.position_manager.positions[self.symbol]
+        symbol_positions = self.position_manager.get_symbol_positions(self.symbol)
+        if not symbol_positions:
+            return
 
-        # Check stop-loss first
-        if pos.stop_loss is not None:
-            sl = float(pos.stop_loss)
-            if (pos.side == "long" and low <= sl) or (pos.side == "short" and high >= sl):
-                logger.info("Stop-loss triggered at %.2f", sl)
-                await self._close_position(sl, "stop_loss")
-                return
+        for key, pos in list(symbol_positions.items()):
+            # Check stop-loss first
+            if pos.stop_loss is not None:
+                sl = float(pos.stop_loss)
+                if (pos.side == "long" and low <= sl) or (pos.side == "short" and high >= sl):
+                    logger.info("Stop-loss triggered at %.2f [%s]", sl, pos.component_id or "default")
+                    await self._close_position(key, sl, "stop_loss")
+                    return  # One event per tick
 
-        # Check partial TP levels
-        if pos.tp_levels and pos.next_tp_idx < len(pos.tp_levels):
-            tp_price, fraction = pos.tp_levels[pos.next_tp_idx]
-            tp_f = float(tp_price)
-            hit = (pos.side == "long" and high >= tp_f) or (pos.side == "short" and low <= tp_f)
+            # Check partial TP levels
+            if pos.tp_levels and pos.next_tp_idx < len(pos.tp_levels):
+                tp_price, fraction = pos.tp_levels[pos.next_tp_idx]
+                tp_f = float(tp_price)
+                hit = (pos.side == "long" and high >= tp_f) or (pos.side == "short" and low <= tp_f)
 
-            if hit:
-                is_last_tp = pos.next_tp_idx >= len(pos.tp_levels) - 1
-                if is_last_tp:
-                    # Last TP level — close entire remaining position
-                    logger.info("Final TP%d triggered at %.2f — closing remaining", pos.next_tp_idx + 1, tp_f)
-                    await self._close_position(tp_f, "take_profit")
-                else:
-                    # Partial close
-                    await self._partial_close(tp_f, fraction, pos.next_tp_idx + 1)
-                return
+                if hit:
+                    is_last_tp = pos.next_tp_idx >= len(pos.tp_levels) - 1
+                    if is_last_tp:
+                        logger.info("Final TP%d triggered at %.2f [%s] — closing remaining",
+                                    pos.next_tp_idx + 1, tp_f, pos.component_id or "default")
+                        await self._close_position(key, tp_f, "take_profit")
+                    else:
+                        await self._partial_close(key, tp_f, fraction, pos.next_tp_idx + 1)
+                    return  # One event per tick
 
-        # Fallback: single TP (no partial levels configured)
-        elif pos.take_profit is not None and not pos.tp_levels:
-            tp = float(pos.take_profit)
-            if (pos.side == "long" and high >= tp) or (pos.side == "short" and low <= tp):
-                logger.info("Take-profit triggered at %.2f", tp)
-                await self._close_position(tp, "take_profit")
-                return
+            # Fallback: single TP (no partial levels configured)
+            elif pos.take_profit is not None and not pos.tp_levels:
+                tp = float(pos.take_profit)
+                if (pos.side == "long" and high >= tp) or (pos.side == "short" and low <= tp):
+                    logger.info("Take-profit triggered at %.2f [%s]", tp, pos.component_id or "default")
+                    await self._close_position(key, tp, "take_profit")
+                    return  # One event per tick
 
-    async def _partial_close(self, exit_price: float, fraction: Decimal, tp_num: int) -> None:
-        """Execute partial close at a TP level."""
-        if self._closing or self.symbol not in self.position_manager.positions:
+    async def _partial_close(self, position_key: str, exit_price: float, fraction: Decimal, tp_num: int) -> None:
+        """Execute partial close at a TP level.
+
+        Args:
+            position_key: Position dict key (symbol or symbol:component_id).
+            exit_price: Exit price.
+            fraction: Fraction of remaining position to close.
+            tp_num: TP level number (1-indexed).
+        """
+        if self._closing or position_key not in self.position_manager.positions:
             return
 
         self._closing = True
-        pos = self.position_manager.positions[self.symbol]
+        pos = self.position_manager.positions[position_key]
         close_amount = pos.amount * fraction
 
         # Execute partial closing order
@@ -493,12 +519,12 @@ class TradingEngine:
         try:
             await self.executor.execute(order)
         except Exception:
-            logger.exception("Partial close order failed")
+            logger.exception("Partial close order failed [%s]", pos.component_id or "default")
             self._closing = False
             return
 
         pnl = self.position_manager.partial_close(
-            self.symbol, Decimal(str(exit_price)), fraction,
+            position_key, Decimal(str(exit_price)), fraction,
         )
         self.risk_manager.update_daily_pnl(pnl)
         self.dashboard.record_trade(pnl, {
@@ -506,19 +532,20 @@ class TradingEngine:
             "entry": float(pos.entry_price),
             "exit": exit_price,
             "reason": f"partial_tp{tp_num}",
+            "component_id": pos.component_id,
         })
 
         # Advance to next TP level
-        if self.symbol in self.position_manager.positions:
-            self.position_manager.positions[self.symbol].next_tp_idx = tp_num
+        if position_key in self.position_manager.positions:
+            self.position_manager.positions[position_key].next_tp_idx = tp_num
 
             # Move SL to entry (breakeven) after first partial TP
             if tp_num == 1:
                 old_sl = float(pos.stop_loss) if pos.stop_loss else 0
-                self.position_manager.positions[self.symbol].stop_loss = pos.entry_price
+                self.position_manager.positions[position_key].stop_loss = pos.entry_price
                 logger.info(
-                    "[BREAKEVEN] SL moved to entry %.2f after TP1",
-                    float(pos.entry_price),
+                    "[BREAKEVEN] SL moved to entry %.2f after TP1 [%s]",
+                    float(pos.entry_price), pos.component_id or "default",
                 )
                 await self.alerter.alert_sl_adjustment(
                     symbol=self.symbol,
@@ -537,29 +564,35 @@ class TradingEngine:
         # Persist state (SL may have moved to breakeven, amount changed)
         self.position_manager._save_state()
 
-        remaining = self.position_manager.positions[self.symbol].amount if self.symbol in self.position_manager.positions else Decimal("0")
+        remaining = self.position_manager.positions[position_key].amount if position_key in self.position_manager.positions else Decimal("0")
         logger.info(
-            "[PARTIAL TP%d] %s %s | %.0f%% closed @ %.2f | PnL=%+.2f | remaining=%s",
-            tp_num, pos.side.upper(), self.symbol,
+            "[PARTIAL TP%d] %s %s [%s] | %.0f%% closed @ %.2f | PnL=%+.2f | remaining=%s",
+            tp_num, pos.side.upper(), self.symbol, pos.component_id or "default",
             float(fraction) * 100, exit_price, float(pnl), float(remaining),
         )
 
         self._closing = False
 
         msg = (
-            f"📊 **Partial TP{tp_num}** | {pos.side.upper()} {self.symbol}\n"
+            f"📊 **Partial TP{tp_num}** | {pos.side.upper()} {self.symbol} [{pos.component_id or 'default'}]\n"
             f"{float(fraction)*100:.0f}% 청산 @ {exit_price:,.2f} | PnL: {float(pnl):+,.2f} USDT ({ret_pct:+.2f}%)\n"
             f"잔여: {float(remaining):.4f}"
         )
         await self.alerter.alert(msg)
 
-    async def _close_position(self, exit_price: float, reason: str) -> None:
-        """Close the current position and record PnL."""
-        if self._closing or self.symbol not in self.position_manager.positions:
+    async def _close_position(self, position_key: str, exit_price: float, reason: str) -> None:
+        """Close a specific component position and record PnL.
+
+        Args:
+            position_key: Position dict key (symbol or symbol:component_id).
+            exit_price: Exit price.
+            reason: Reason for closing (stop_loss, take_profit, reverse_signal).
+        """
+        if self._closing or position_key not in self.position_manager.positions:
             return
 
         self._closing = True
-        pos = self.position_manager.positions[self.symbol]
+        pos = self.position_manager.positions[position_key]
 
         # Execute closing order
         close_side = OrderSide.SELL if pos.side == "long" else OrderSide.BUY
@@ -571,13 +604,14 @@ class TradingEngine:
         try:
             await self.executor.execute(order)
         except Exception:
-            logger.exception("Close order execution failed — local state NOT updated")
+            logger.exception("Close order execution failed [%s] — local state NOT updated",
+                             pos.component_id or "default")
             self._closing = False
             return
 
         entry_price = float(pos.entry_price)
         pnl = self.position_manager.close_position(
-            self.symbol, Decimal(str(exit_price))
+            position_key, Decimal(str(exit_price))
         )
         self.risk_manager.update_daily_pnl(pnl)
         self.risk_manager.open_positions = max(0, self.risk_manager.open_positions - 1)
@@ -586,6 +620,7 @@ class TradingEngine:
             "entry": entry_price,
             "exit": exit_price,
             "reason": reason,
+            "component_id": pos.component_id,
         })
 
         if entry_price > 0:
@@ -595,8 +630,8 @@ class TradingEngine:
 
         metrics = self.dashboard.get_metrics()
         logger.info(
-            "[EXIT #%d] %s %s | entry=%.2f -> exit=%.2f | PnL=%+.2f USDT (%+.2f%%) | reason=%s | cumPnL=%.2f | equity=%.2f | DD=%.2f%%",
-            self._trade_count, pos.side.upper(), self.symbol,
+            "[EXIT #%d] %s %s [%s] | entry=%.2f -> exit=%.2f | PnL=%+.2f USDT (%+.2f%%) | reason=%s | cumPnL=%.2f | equity=%.2f | DD=%.2f%%",
+            self._trade_count, pos.side.upper(), self.symbol, pos.component_id or "default",
             entry_price, exit_price,
             float(pnl), ret_pct, reason,
             float(metrics.total_pnl), metrics.current_equity,
@@ -726,8 +761,8 @@ class TradingEngine:
         # Report any open positions
         if self.position_manager.positions:
             pos_info = []
-            for sym, pos in self.position_manager.positions.items():
-                pos_info.append(f"  {sym}: {pos.side} @ {pos.entry_price} (uPnL: {pos.unrealized_pnl})")
+            for key, pos in self.position_manager.positions.items():
+                pos_info.append(f"  {key}: {pos.side} @ {pos.entry_price} (uPnL: {pos.unrealized_pnl})")
             await self.alerter.alert(
                 f"⚠️ **TradingEngine Shutting Down**\n"
                 f"Open positions:\n" + "\n".join(pos_info)

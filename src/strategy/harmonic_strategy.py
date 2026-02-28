@@ -1,4 +1,9 @@
-"""Harmonic pattern trading strategy."""
+"""DEPRECATED — Harmonic pattern trading strategy.
+
+Never walk-forward validated. Initial scaffold from project setup.
+Harmonic patterns produce too few trades on BTC 1h/15m for reliable WF validation.
+Best portfolio: Cross-TF 1hRSI/1hDC/15mRSI/1hWillR 15/50/10/25 = 88% rob, +23.98% OOS (Phase 25).
+"""
 
 from __future__ import annotations
 

@@ -11,6 +11,7 @@ Use !new to start a fresh Claude session.
 from __future__ import annotations
 
 import asyncio
+import datetime
 import json
 import logging
 import os
@@ -27,6 +28,7 @@ os.environ.setdefault(
 )
 
 import discord
+from discord.ext import tasks
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -103,6 +105,121 @@ async def _send_long(channel: discord.abc.Messageable, text: str) -> None:
         chunk = text[:1990]
         text = text[1990:]
         await channel.send(f"```\n{chunk}\n```")
+
+
+# ===========================================================================
+# Daily team report
+# ===========================================================================
+
+ROLE_PATHS: dict[str, list[str]] = {
+    "data-engineer": ["src/data/", "scripts/collect_data.py"],
+    "strategy-researcher": ["src/indicators/", "src/strategy/", "src/backtest/"],
+    "ml-engineer": ["src/ml/", "scripts/train_model.py"],
+    "execution-engineer": ["src/execution/", "src/monitoring/", "scripts/live_trading.py"],
+}
+
+PYTHON = str(PROJECT_ROOT / ".venv" / "bin" / "python")
+
+
+def _build_daily_report() -> str:
+    """Build the daily team report message."""
+    now_kst = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9)))
+    header = f"\U0001f4cb **일일 팀 보고** | {now_kst:%Y-%m-%d %H:%M} KST\n"
+    sections: list[str] = []
+
+    for role, paths in ROLE_PATHS.items():
+        lines: list[str] = []
+
+        # --- git log (24h) ---
+        git_args = ["git", "log", "--since=24 hours ago", "--oneline", "--"]
+        git_args.extend(paths)
+        try:
+            proc = subprocess.run(
+                git_args, capture_output=True, text=True, cwd=PROJECT_ROOT, timeout=15,
+            )
+            commits = [l for l in proc.stdout.strip().splitlines() if l]
+        except Exception:
+            commits = []
+
+        if commits:
+            lines.append(f"커밋 (24h): {len(commits)}건")
+            for c in commits[:5]:
+                lines.append(f"  - {c}")
+            if len(commits) > 5:
+                lines.append(f"  ... 외 {len(commits) - 5}건")
+        else:
+            lines.append("커밋 (24h): 0건")
+
+        # --- uncommitted changed files owned by this role ---
+        owned: list[str] = []
+        try:
+            staged = subprocess.run(
+                ["git", "diff", "--cached", "--name-only"],
+                capture_output=True, text=True, cwd=PROJECT_ROOT, timeout=10,
+            ).stdout.strip().splitlines()
+            unstaged = subprocess.run(
+                ["git", "diff", "--name-only"],
+                capture_output=True, text=True, cwd=PROJECT_ROOT, timeout=10,
+            ).stdout.strip().splitlines()
+            untracked = subprocess.run(
+                ["git", "ls-files", "--others", "--exclude-standard"],
+                capture_output=True, text=True, cwd=PROJECT_ROOT, timeout=10,
+            ).stdout.strip().splitlines()
+            all_changed = set(staged + unstaged + untracked)
+            owned = [f for f in all_changed if any(f.startswith(p) or f == p for p in paths)]
+            lines.append(f"변경 파일: {len(owned)}개 (uncommitted)")
+        except Exception:
+            lines.append("변경 파일: (확인 실패)")
+
+        # --- review.py --role ---
+        try:
+            proc = subprocess.run(
+                [PYTHON, str(PROJECT_ROOT / "scripts" / "review.py"), "--role", role],
+                capture_output=True, text=True, cwd=PROJECT_ROOT, timeout=60,
+            )
+            output = proc.stdout + proc.stderr
+            # Parse summary line: PASS=N | WARN=N | FAIL=N
+            m = re.search(r"PASS.*?=\s*(\d+).*WARN.*?=\s*(\d+).*FAIL.*?=\s*(\d+)", output)
+            if m:
+                p, w, f = int(m.group(1)), int(m.group(2)), int(m.group(3))
+                review_str = f"리뷰: PASS={p} | WARN={w} | FAIL={f}"
+                if f > 0:
+                    review_str += " \u26a0\ufe0f"
+                lines.append(review_str)
+            else:
+                lines.append("리뷰: (변경 없음)")
+        except Exception:
+            lines.append("리뷰: (실행 실패)")
+
+        # --- assemble section ---
+        if not commits and not owned:
+            sections.append(f"\u2501\u2501\u2501 {role} \u2501\u2501\u2501\n(활동 없음)")
+        else:
+            sections.append(f"\u2501\u2501\u2501 {role} \u2501\u2501\u2501\n" + "\n".join(lines))
+
+    return header + "\n\n".join(sections)
+
+
+@tasks.loop(time=datetime.time(hour=0, minute=0, tzinfo=datetime.timezone.utc))
+async def daily_team_report() -> None:
+    """Send daily team report at 00:00 UTC (09:00 KST)."""
+    channel = client.get_channel(CHANNEL_ID)
+    if channel is None:
+        logger.warning("daily_team_report: channel %s not found", CHANNEL_ID)
+        return
+
+    logger.info("Generating daily team report...")
+    try:
+        loop = asyncio.get_event_loop()
+        report = await loop.run_in_executor(None, _build_daily_report)
+        # Split if needed (Discord 2000 char limit)
+        while report:
+            chunk = report[:1990]
+            report = report[1990:]
+            await channel.send(chunk)
+        logger.info("Daily team report sent.")
+    except Exception:
+        logger.exception("Failed to send daily team report")
 
 
 # ===========================================================================
@@ -514,6 +631,9 @@ async def on_ready() -> None:
     logger.info("Discord bot online: %s (ID: %s)", client.user, client.user.id)
     logger.info("Listening on channel: %s", CHANNEL_ID)
     logger.info("Allowed users: %s", ALLOWED_USER_IDS)
+    if not daily_team_report.is_running():
+        daily_team_report.start()
+        logger.info("daily_team_report started (00:00 UTC / 09:00 KST)")
 
 
 @client.event
@@ -563,6 +683,17 @@ async def on_message(message: discord.Message) -> None:
             await cmd_start(message.channel)
         elif cmd == "!stop":
             await cmd_stop(message.channel)
+        elif cmd == "!report":
+            await message.channel.send("> Generating team report...")
+            try:
+                loop = asyncio.get_event_loop()
+                report = await loop.run_in_executor(None, _build_daily_report)
+                while report:
+                    chunk = report[:1990]
+                    report = report[1990:]
+                    await message.channel.send(chunk)
+            except Exception as e:
+                await message.channel.send(f"```\nReport error: {e}\n```")
         elif cmd == "!new":
             global _claude_session_id
             _claude_session_id = None
@@ -580,6 +711,7 @@ async def on_message(message: discord.Message) -> None:
                 "!signal    — 최근 시그널\n"
                 "!backtest  — Walk-Forward 결과\n"
                 "!team      — 에이전트 팀 상태\n"
+                "!report    — 팀원 일일 보고 (매일 09:00 KST 자동)\n"
                 "!start     — 봇 시작 (tmux)\n"
                 "!stop      — 봇 중지 (tmux Ctrl-C)\n"
                 "!help      — 이 메시지\n"

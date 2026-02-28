@@ -1,4 +1,9 @@
-"""Regime-switching meta-strategy.
+"""DEPRECATED: Regime-switching meta-strategy.
+
+Suboptimal vs simple portfolio approach.
+RSI+DC 50/50 achieves 77% robustness at 9w without regime complexity.
+Never validated at 9w. ML regime classifier (Phase 10c) adds no value
+over simple ADX threshold. Use PortfolioStrategy instead.
 
 Uses ADX to classify market regime (trending vs ranging) and delegates
 to appropriate sub-strategies.
@@ -10,7 +15,15 @@ Walk-Forward results (1h, BB+RSI_MR sub-strategies):
   Phase 10 (5w):  80% robustness, OOS +5.48%, Full +6.67%, DD 15.8%
   Phase 10 (7w):  71% robustness, OOS +3.53%
 
-Best config: adx_threshold=20. Higher thresholds (25-35) degrade OOS.
+Phase 8 results (1h, DC+RSI_MR sub-strategies, 7w):
+  ADX20: 57% rob, OOS +39.02%, Full -14.95%, DD 38.0% — FAILS full period
+  ADX25: 57% rob, OOS +27.86%, Full -19.05%, DD 36.6% — FAILS full period
+  ADX30: 86% rob, OOS +37.00%, Full  -1.82%, DD 31.9% — WF looks good but
+         Full period NEGATIVE. Unreliable — WF catches lucky windows.
+
+Conclusion: Use PortfolioStrategy (equal-weight) instead of regime switching.
+  RSI+DC 50/50 = 71% rob (7w), VWAP+DC 50/50 = 86% rob (7w).
+  Cross-TF 1hRSI/1hDC/15mRSI 33/33/34 = 88% rob (9w). All superior.
 """
 
 from __future__ import annotations

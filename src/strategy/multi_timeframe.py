@@ -1,4 +1,9 @@
-"""Multi-timeframe analysis strategy."""
+"""DEPRECATED — Multi-timeframe analysis strategy.
+
+Superseded by MultiTimeframeFilter in mtf_filter.py (decorator pattern).
+Never walk-forward validated independently. mtf_filter.py wraps any BaseStrategy
+with 4h EMA_20/50 trend filtering — used by all production components.
+"""
 
 from __future__ import annotations
 

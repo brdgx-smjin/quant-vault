@@ -1,4 +1,8 @@
-"""EMA trend-following strategy with RSI and ATR."""
+"""DEPRECATED — EMA trend-following strategy with RSI and ATR.
+
+Never walk-forward validated. Initial scaffold from project setup.
+Use DonchianTrendStrategy+MTF for trend following instead (55% rob, 9w).
+"""
 
 from __future__ import annotations
 

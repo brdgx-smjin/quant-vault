@@ -1,19 +1,10 @@
-"""ML Regime Classifier — meta-model for strategy selection.
-
-Instead of predicting returns directly (which failed with XGBoost),
-this classifies the market REGIME and selects the best strategy:
-  - Trending regime: use BBSqueeze (breakout works in trends)
-  - Ranging regime: use RSI_MR (mean reversion works in ranges)
-
-Tested as improvement over RegimeSwitchStrategy(ADX=20) by using multiple
-features (ADX, volatility, BB_width, trend strength) instead of just ADX.
+"""DEPRECATED — ML Regime Classifier for strategy selection.
 
 Phase 10c results — DOES NOT IMPROVE over simple ADX threshold:
   MLRegime_NoVol+MTF (5w): 80% rob, OOS +6.30%, but Full -2.63% (overfitting)
   MLRegime_NoVol (7w): 57% rob — degrades vs Regime_ADX20's 71%
   More features = more noise = more overfitting.
-
-Conclusion: Use RegimeSwitchStrategy(ADX=20) instead — simpler and more robust.
+Use RegimeSwitchStrategy(ADX=20) instead — simpler and more robust.
 """
 
 from __future__ import annotations

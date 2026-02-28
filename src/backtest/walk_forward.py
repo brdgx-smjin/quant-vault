@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 import pandas as pd
@@ -40,6 +40,54 @@ class WalkForwardReport:
     oos_profitable_windows: int
     total_windows: int
     robustness_score: float  # 0-1: fraction of profitable OOS windows
+
+
+@dataclass
+class CrossTFComponent:
+    """One component of a cross-timeframe portfolio.
+
+    Defines a strategy to run on a specific timeframe with its own
+    backtest engine. Used by WalkForwardAnalyzer.run_cross_tf().
+    """
+
+    strategy_factory: Callable[[], object]  # Returns fresh BaseStrategy
+    df: pd.DataFrame  # OHLCV with indicators for this timeframe
+    htf_df: Optional[pd.DataFrame]  # Higher-TF data for MTF filter
+    engine: BacktestEngine  # Configured for this timeframe (freq, max_hold)
+    weight: float  # Portfolio weight (0-1)
+    label: str  # Display name (e.g. "1h_RSI", "15m_RSI")
+
+
+@dataclass
+class ComponentWindowResult:
+    """Result of one component in one cross-TF window."""
+
+    label: str
+    oos_return: float
+    oos_trades: int
+
+
+@dataclass
+class CrossTFWindow:
+    """One window of cross-TF walk-forward results."""
+
+    window_id: int
+    test_start: str
+    test_end: str
+    components: list[ComponentWindowResult]
+    weighted_return: float
+
+
+@dataclass
+class CrossTFReport:
+    """Cross-timeframe portfolio walk-forward report."""
+
+    windows: list[CrossTFWindow]
+    oos_total_return: float  # Compounded OOS return
+    oos_profitable_windows: int
+    total_windows: int
+    robustness_score: float  # 0-1: fraction of profitable OOS windows
+    total_trades: int
 
 
 class WalkForwardAnalyzer:
@@ -347,3 +395,146 @@ class WalkForwardAnalyzer:
             total_windows=len(windows),
             robustness_score=profitable / len(windows) if windows else 0,
         )
+
+    def run_cross_tf(
+        self,
+        components: list[CrossTFComponent],
+    ) -> CrossTFReport:
+        """Run cross-timeframe portfolio walk-forward analysis.
+
+        Splits windows by DATE (not bar index) so strategies on different
+        timeframes have exactly aligned test periods. Each component runs
+        independently on its own timeframe data; OOS returns are
+        weight-averaged per window.
+
+        This solves the Phase 16 caveat where separate bar-based WF runs
+        on 1h and 15m had approximately-aligned but not exact window dates.
+
+        Args:
+            components: List of CrossTFComponent definitions. Each has its
+                own strategy factory, data, engine, weight, and label.
+
+        Returns:
+            CrossTFReport with per-window and aggregate portfolio results.
+        """
+        if not components:
+            return CrossTFReport(
+                windows=[], oos_total_return=0,
+                oos_profitable_windows=0, total_windows=0,
+                robustness_score=0, total_trades=0,
+            )
+
+        # Validate weights
+        total_weight = sum(c.weight for c in components)
+        if abs(total_weight - 1.0) > 0.01:
+            logger.warning(
+                "Cross-TF weights sum to %.3f (expected 1.0)", total_weight,
+            )
+
+        # Common date range across all components
+        start_date = max(c.df.index[0] for c in components)
+        end_date = min(c.df.index[-1] for c in components)
+        total_td = end_date - start_date
+
+        # Test windows: contiguous, covering last (1-train_ratio) of range
+        test_td = total_td * (1 - self.train_ratio) / self.n_windows
+
+        logger.info(
+            "Cross-TF WF: %d windows, %s ~ %s, test=~%d days each",
+            self.n_windows, start_date.date(), end_date.date(),
+            test_td.days,
+        )
+
+        windows: list[CrossTFWindow] = []
+
+        for i in range(self.n_windows):
+            test_end = end_date - (self.n_windows - 1 - i) * test_td
+            test_start = test_end - test_td
+
+            comp_results: list[ComponentWindowResult] = []
+
+            for comp in components:
+                # Slice by date — last window includes final bar
+                if i < self.n_windows - 1:
+                    test_mask = (
+                        (comp.df.index >= test_start)
+                        & (comp.df.index < test_end)
+                    )
+                else:
+                    test_mask = comp.df.index >= test_start
+
+                test_df = comp.df[test_mask]
+
+                if len(test_df) < 30:
+                    logger.warning(
+                        "  W%d: %s has only %d bars — skipping",
+                        i + 1, comp.label, len(test_df),
+                    )
+                    comp_results.append(ComponentWindowResult(
+                        label=comp.label, oos_return=0.0, oos_trades=0,
+                    ))
+                    continue
+
+                strategy = comp.strategy_factory()
+                result = comp.engine.run(
+                    strategy, test_df, htf_df=comp.htf_df,
+                )
+                comp_results.append(ComponentWindowResult(
+                    label=comp.label,
+                    oos_return=result.total_return,
+                    oos_trades=result.total_trades,
+                ))
+
+            weighted_ret = sum(
+                cr.oos_return * comp.weight
+                for cr, comp in zip(comp_results, components)
+            )
+
+            windows.append(CrossTFWindow(
+                window_id=i + 1,
+                test_start=str(test_start.date()),
+                test_end=str(test_end.date()),
+                components=comp_results,
+                weighted_return=weighted_ret,
+            ))
+
+            parts = [
+                f"{cr.label} {cr.oos_return:+.2f}%"
+                for cr in comp_results
+            ]
+            marker = "+" if weighted_ret > 0 else "-"
+            logger.info(
+                "  W%d [%s ~ %s]: %s -> %+.2f%% %s",
+                i + 1, test_start.date(), test_end.date(),
+                " | ".join(parts), weighted_ret, marker,
+            )
+
+        # Aggregate
+        oos_returns = [w.weighted_return for w in windows]
+        compounded = 1.0
+        for r in oos_returns:
+            compounded *= (1 + r / 100)
+        oos_total = (compounded - 1) * 100
+
+        profitable = sum(1 for r in oos_returns if r > 0)
+        total_trades = sum(
+            sum(cr.oos_trades for cr in w.components)
+            for w in windows
+        )
+
+        report = CrossTFReport(
+            windows=windows,
+            oos_total_return=oos_total,
+            oos_profitable_windows=profitable,
+            total_windows=len(windows),
+            robustness_score=profitable / len(windows) if windows else 0,
+            total_trades=total_trades,
+        )
+
+        logger.info(
+            "  Cross-TF OOS: %+.2f%% | Robustness: %d%% (%d/%d) | Trades: %d",
+            oos_total, int(report.robustness_score * 100),
+            profitable, len(windows), total_trades,
+        )
+
+        return report

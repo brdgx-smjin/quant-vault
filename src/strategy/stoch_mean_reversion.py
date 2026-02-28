@@ -1,4 +1,4 @@
-"""Stochastic Oscillator Mean Reversion strategy.
+"""DEPRECATED — Stochastic Oscillator Mean Reversion strategy.
 
 FAILED — Phase 11 results (1h):
   All variants have negative Full period returns (-15% to -70%).
@@ -10,7 +10,7 @@ FAILED — Phase 11 results (1h):
     Stochastic crossover signals are too noisy for MTF to filter effectively.
 
   Conclusion: Stochastic Mean Reversion does NOT work on BTC/USDT 1h.
-  RSI_MR+MTF (78% rob at 9w) and VWAP_MR+MTF (67% at 9w) are strictly superior.
+  RSI_MR+MTF (66% rob at 9w) and VWAP_MR+MTF (55% at 9w) are strictly superior.
   Kept for reference only.
 
 Entry rules:

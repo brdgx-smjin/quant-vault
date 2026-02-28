@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from typing import Callable, Optional
 
 import numpy as np
 import pandas as pd
 import vectorbt as vbt
 
 from src.strategy.base import BaseStrategy, Signal
-
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +65,8 @@ class BacktestEngine:
         trailing_atr_mult: float = 0.0,  # 0 = disabled; >0 = ATR trailing stop
         breakeven_at_r: float = 0.0,  # 0 = disabled; >0 = move SL to entry after N*R profit
         freq: str = "1h",  # Data frequency for Sharpe ratio annualization
+        exit_check_fn: Optional[Callable[[pd.DataFrame, str], bool]] = None,
+        tp_decay_rate: float = 0.0,  # 0 = disabled; >0 = TP shrinks over time
     ) -> None:
         self.initial_capital = initial_capital
         self.commission = commission
@@ -74,6 +75,8 @@ class BacktestEngine:
         self.trailing_atr_mult = trailing_atr_mult
         self.breakeven_at_r = breakeven_at_r
         self.freq = freq
+        self.exit_check_fn = exit_check_fn
+        self.tp_decay_rate = tp_decay_rate
 
     def run(
         self,
@@ -112,6 +115,7 @@ class BacktestEngine:
         current_sl = np.nan
         current_tp = np.nan
         original_sl = np.nan  # Original SL for breakeven calculation
+        original_tp = np.nan  # Original TP for TP decay calculation
         best_price = np.nan  # For trailing stop: best price since entry
         entry_atr = np.nan   # ATR at entry for trailing stop distance
         warmup = 50
@@ -181,6 +185,23 @@ class BacktestEngine:
                         exit_reason = "tp"
                         exit_price = current_tp
 
+                # TP decay: shrink TP target as position ages
+                if (not exit_reason and self.tp_decay_rate > 0
+                        and not np.isnan(current_tp)):
+                    bars_held = i - entry_bar
+                    decay = max(0.5, 1.0 - bars_held / self.max_hold_bars * self.tp_decay_rate)
+                    if position_side == "long":
+                        current_tp = entry_price + (original_tp - entry_price) * decay
+                    elif position_side == "short":
+                        current_tp = entry_price - (entry_price - original_tp) * decay
+
+                # Signal-driven exit: check exit function
+                if not exit_reason and self.exit_check_fn is not None:
+                    window_slice = df.iloc[: i + 1]
+                    if self.exit_check_fn(window_slice, position_side):
+                        exit_reason = "signal_exit"
+                        exit_price = close_i
+
                 # Timeout exit (same for both sides)
                 if not exit_reason and i - entry_bar >= self.max_hold_bars:
                     exit_reason = "timeout"
@@ -235,6 +256,7 @@ class BacktestEngine:
                     current_sl = sig.stop_loss if sig.stop_loss else np.nan
                     current_tp = sig.take_profit if sig.take_profit else np.nan
                     original_sl = current_sl
+                    original_tp = current_tp
                     best_price = high_i
                     entry_atr = float(df["atr_14"].iloc[i]) if has_atr else np.nan
                     trade_id += 1
@@ -248,6 +270,7 @@ class BacktestEngine:
                     current_sl = sig.stop_loss if sig.stop_loss else np.nan
                     current_tp = sig.take_profit if sig.take_profit else np.nan
                     original_sl = current_sl
+                    original_tp = current_tp
                     best_price = low_i
                     entry_atr = float(df["atr_14"].iloc[i]) if has_atr else np.nan
                     trade_id += 1

@@ -1,4 +1,9 @@
-"""Ensemble strategy that combines multiple sub-strategies."""
+"""DEPRECATED — Ensemble strategy that combines multiple sub-strategies.
+
+Superseded by PortfolioStrategy (portfolio.py) and CrossTimeframePortfolio.
+Never walk-forward validated. Weighted voting approach replaced by
+weight-averaged returns in CrossTimeframePortfolio (88% rob, +23.98% OOS, Phase 25).
+"""
 
 from __future__ import annotations
 

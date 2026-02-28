@@ -106,7 +106,7 @@ class RiskManager:
             position_size = position_size * kelly_fraction
 
         # Cap position size by account balance * leverage (convert to asset units)
-        max_notional = account_balance * Decimal("0.1") * leverage
+        max_notional = account_balance * Decimal("1.0") * leverage
         max_position = max_notional / price
         position_size = min(position_size, max_position)
 

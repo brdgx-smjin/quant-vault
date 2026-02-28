@@ -1,4 +1,10 @@
-"""Fibonacci + ML ensemble strategy: Fib generates signal, ML confirms."""
+"""DEPRECATED — Fibonacci + ML ensemble strategy: Fib generates signal, ML confirms.
+
+Never walk-forward validated as ensemble. Component WF results:
+  - Fibonacci (4h): 67% robustness but only 4 OOS trades — unreliable.
+  - ML XGBoost filter: 0% robustness (Phase 4) — no predictive value.
+  - Combined: not tested (both components failed independently).
+"""
 
 from __future__ import annotations
 

@@ -6,12 +6,19 @@ MUST use with MultiTimeframeFilter(4h EMA) for reliability.
 
 Walk-Forward results (1h, with MTF 4h filter):
   Phase 10 (5w):  80% robustness, OOS +8.91%, Full +152% (overfitted), DD 11%
-  Phase 10 (7w):  71% robustness, OOS +3.28%
-  Phase 10 (9w):  67% robustness, OOS +11.55%
+  Phase 12 (7w):  71% robustness, OOS +3.43%
+  Phase 14 (9w):  55% robustness, OOS +11.57%, Full +119.57%, DD 11.7%, PF 2.56
   Standalone (no MTF): 60% rob, OOS -1.48%, DD 40% — COLLAPSES
 
+Phase 8 results (7w):
+  VWAP_p24_b2.0:  71% rob, OOS +5.91%, Full +139.94%, DD 11.7%, PF 2.59
+  VWAP_p24_b1.5:  71% rob, OOS +10.10%, Full +133.11%, DD 13.6%, PF 2.24
+  VWAP_p48_b2.0:  57% rob, OOS +4.60%, Full +132.06%, DD 9.7%, PF 2.98
+  VWAP+DC 50/50:  86% rob (7w), OOS +22.23% — strong portfolio component
+
+Degrades at 9w (55%). Best as portfolio component: VWAP+DC 50/50 = 86% rob (7w).
 Best config: vwap_period=24, band_mult=2.0, rsi=35, sl=2.0, cool=4.
-Always use with MTF(4h EMA). Full return (~152%) likely overfitted.
+Always use with MTF(4h EMA). Full return is overfitted — rely on WF OOS only.
 """
 
 from __future__ import annotations

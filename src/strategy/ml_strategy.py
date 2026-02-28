@@ -1,4 +1,9 @@
-"""ML-based trading strategy using XGBoost predictions."""
+"""DEPRECATED — ML-based trading strategy using XGBoost predictions.
+
+Walk-Forward results: 0% robustness at all window counts.
+ML feature-based prediction does not work as a standalone strategy.
+See ml_regime_strategy.py for the meta-model approach (also failed).
+"""
 
 from __future__ import annotations
 

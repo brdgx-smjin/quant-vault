@@ -1,6 +1,6 @@
 risk_management:
-  max_loss_per_trade_pct: 0.02      # 2% per trade
-  daily_max_loss_pct: 0.05          # 5% daily
+  max_loss_per_trade_pct: 1.00      # 100% per trade (50x from 2%)
+  daily_max_loss_pct: 2.50          # 250% daily (50x from 5%)
   max_open_positions: 3
   max_leverage: 10
   default_leverage: 5
@@ -9,7 +9,7 @@ risk_management:
 position_sizing:
   method: "kelly"                    # kelly | fixed | volatility_adjusted
   kelly_fraction: 0.25              # quarter-Kelly
-  fixed_amount_usdt: 100
+  fixed_amount_usdt: 5000
 
 stop_loss:
   method: "atr"                      # atr | fixed_pct | swing_low

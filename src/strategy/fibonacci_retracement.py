@@ -1,16 +1,9 @@
-"""Fibonacci retracement strategy with EMA trend filter and ATR stops.
+"""DEPRECATED — Fibonacci retracement strategy with EMA trend filter.
 
 Walk-Forward results (4h, standalone):
-  Phase 10 (5w):  40% robustness, OOS +0.89%, Full +15.56%, only 7 OOS trades
+  Phase 10 (5w):  40% robustness, OOS +0.89%, only 7 OOS trades
   Phase 10 (7w):  14% robustness, OOS +0.86%, only 3 OOS trades
-
-  BB+Fib 50/50 portfolio:
-    5w: 80% rob, OOS +3.29% — decent robustness but low OOS
-    7w: 42% rob, OOS +3.37% — FAILS below 60% threshold
-
-Warning: Fib generates very few trades on 4h BTC — low statistical significance.
-Not recommended for production. BB+RSI_MTF or BB+VWAP_MTF portfolios
-are strictly superior at all window counts.
+Too few trades for statistical significance. Use RSI_MR+MTF or DC+MTF instead.
 """
 
 from __future__ import annotations

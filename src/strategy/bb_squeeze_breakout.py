@@ -6,11 +6,12 @@ when price breaks out with volume and momentum confirmation.
 Walk-Forward results (1h, with MTF 4h filter, require_trend=False):
   Phase 10 (5w):  60% robustness, OOS +5.71%, Full +25.97%, DD 10.3%, PF 2.31
   Phase 10 (7w):  42% robustness, OOS +5.52%
-  Phase 10 (9w):  33% robustness, OOS -0.57% — degrades at high window counts
+  Phase 13 (9w):  44% robustness, OOS -1.08%, Full +9.89%, DD 15.7%, PF 1.30
+  Phase 7  (7w):  57% robustness, OOS +12.60%, Full +9.05%, DD 15.7%, PF 1.29
 
-Note: BBSqueeze becomes unreliable at 9w WF. Use RSI_MR+MTF or VWAP_MR+MTF
-for higher-window robustness. BB remains useful as a portfolio diversifier
-due to negative correlation with mean-reversion strategies.
+BB degrades severely at high window counts. NOT recommended as standalone.
+Use RSI_MR+MTF or VWAP_MR+MTF for single-strategy deployment.
+BB can still contribute as a minor portfolio component but DC is preferred.
 
 Optimal params: squeeze_pctile=25, vol_mult=1.1, atr_sl_mult=3.0,
     rr_ratio=2.0, cooldown_bars=6, require_trend=False.
@@ -19,7 +20,8 @@ Always use with MultiTimeframeFilter(4h EMA).
 Tested and REJECTED enhancements (Phase 5):
   - ADX filter (adx_threshold>0): 60% rob but OOS -1.09% — NOT helpful
   - Trailing stop (disable_tp): 40% rob — worse
-  - Candle body filter, session filter (v3): all degraded OOS — see bb_squeeze_v3.py
+  - Candle body filter, session filter (v3): all degraded OOS
+    bb_squeeze_v2.py and bb_squeeze_v3.py are backward-compat aliases to this file.
 """
 
 from __future__ import annotations

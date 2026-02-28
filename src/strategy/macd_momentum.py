@@ -1,26 +1,10 @@
-"""MACD Momentum strategy — catch early momentum shifts.
-
-Fundamentally different from existing strategies:
-  - BBSqueeze = breakout (volatility expansion)
-  - RSI/VWAP = mean reversion (fading extremes)
-  - MACD Momentum = momentum shift (catching trend turns early)
-
-Entry logic:
-  LONG:  MACD crosses above signal line while MACD < 0 (early bullish shift)
-         + volume confirmation + RSI not already overbought
-  SHORT: MACD crosses below signal line while MACD > 0 (early bearish shift)
-         + volume confirmation + RSI not already oversold
-
-The "MACD below/above zero" condition ensures we catch early reversals,
-not pile into already extended moves.
+"""DEPRECATED — MACD Momentum strategy.
 
 FAILED — Phase 10 results (1h):
   All variants deeply negative (OOS -3% to -49%, robustness 0-40%).
   Best: MACD_Tight(8_21)+MTF — OOS -3.41%, 40% robustness (still negative).
   Full period returns -55% to -90%.
-
   MACD momentum does NOT work on BTC/USDT 1h. Do not use in production.
-  Kept for reference only.
 """
 
 from __future__ import annotations

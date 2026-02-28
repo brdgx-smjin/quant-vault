@@ -17,9 +17,45 @@ Entry rules:
 
   Exit via ATR-based SL and RR-based TP (or trailing via engine).
 
-Designed to be used with MultiTimeframeFilter(4h EMA) for best results.
+MUST use with MultiTimeframeFilter(4h EMA) — standalone is catastrophic
+(Full -97% without MTF, +18% with MTF).
 
-Walk-Forward results: pending Phase 12 validation.
+Walk-Forward results (1h, with MTF 4h filter):
+  Phase 12 (5w):  80% robustness, OOS +25.49%, Full +18.02%, DD 25.4%, PF 1.22
+  Phase 12 (7w):  71% robustness, OOS +36.47%
+  Phase 14 (9w):  55% robustness, OOS +26.50% — degrades like BB at high window counts
+
+Highest absolute OOS return but degrades at 9w. Best as portfolio component
+with mean-reversion strategies: RSI+DC 50/50 = 77% robustness at 9w.
+Best config: entry_period=24, atr_sl_mult=2.0, rr_ratio=2.0, vol_mult=0.8.
+Always use with MTF(4h EMA).
+
+Portfolio value (7w):
+  VWAP+DC 50/50: 85% robustness, OOS +19.64% — BEST portfolio robustness
+  BB+DC 50/50:   85% robustness, OOS +19.18%
+  RSI+DC 50/50:  71% robustness, OOS +23.85%
+
+Portfolio value (9w, Phase 14 bar-aligned):
+  RSI+DC 50/50:     77% robustness, OOS +20.27%
+  VWAP+DC 50/50:    77% robustness, OOS +19.31%
+  RSI+VWAP+DC equal: 77% robustness, OOS +17.54%
+
+Cross-TF portfolio (Phase 17 — FORMALLY VALIDATED, date-aligned 9w):
+  1hRSI/1hDC/15mRSI 33/33/34 = 88% robustness, OOS +18.81% ★
+  1h-only RSI+DC 50/50 (date-aligned) = 66% rob — W6/W9 borderline
+  15m RSI diversifies away W5/W6 → 88% ceiling (only W2 negative).
+  DC does NOT work on 15m — only 1h. Use as 1h portfolio component.
+
+Phase 20 parameter stability: min=77%, avg=87% — very robust across all params.
+
+Phase 24 — 15m DC formally tested (9w WF, multiple configs):
+  DC_15m_p48_c12:  44% rob, +3.62% OOS, 75 trades — BEST 15m config
+  DC_15m_p96_c12:  44% rob, -9.28% OOS, 46 trades
+  DC_15m_p96_c24:  44% rob, -1.46% OOS, 37 trades
+  DC_15m_p192_c24: 33% rob, -4.65% OOS, 26 trades
+  Conclusion: 15m DC CONFIRMED NOT VIABLE (44% max vs 77% RSI 15m).
+  As portfolio replacement for 15m RSI: max 66% rob — degrades portfolio.
+  Donchian works ONLY on 1h. 15m noise destroys channel breakout signals.
 """
 
 from __future__ import annotations

@@ -4,13 +4,28 @@ MUST use with MultiTimeframeFilter(4h EMA) for reliability.
 
 Walk-Forward results (1h, with MTF 4h filter):
   Phase 10 (5w):  60% robustness, OOS +13.46%, Full +148% (overfitted)
-  Phase 10 (7w):  71% robustness, OOS +10.52%
-  Phase 10 (9w):  78% robustness, OOS +20.59% — **BEST SINGLE STRATEGY**
+  Phase 12 (7w):  71% robustness, OOS +10.68%
+  Phase 14 (9w):  66% robustness, OOS +13.29%, Full +90.27%, DD 19.4%, PF 1.74
   Standalone (no MTF): 40% rob, OOS -3 to -18% — FAILS
 
-Key finding: RSI+MTF gets MORE robust at higher window counts (78% at 9w).
-Full-period returns (140-150%) are overfitted — rely on WF OOS only.
-Best config: rsi_oversold=35, rsi_overbought=65, atr_sl=2.0, atr_tp=3.0.
+Walk-Forward results (15m, RSI_35_65_mid config, cool=12, max_hold=96):
+  Phase 16 (9w):  77% robustness, OOS +17.50%, Full +231.92%, Sharpe 1.42
+  Best single-strategy result at any timeframe.
+  15m captures different regimes than 1h (negative W2,W5 vs 1h W2,W6).
+
+Best configs:
+  1h:  oversold=35, overbought=65, sl=2.0, tp=3.0, cool=6
+  15m: oversold=35, overbought=65, sl=2.0, tp=3.0, cool=12, max_hold=96
+
+Cross-TF portfolio (Phase 17 — FORMALLY VALIDATED, date-aligned 9w):
+  1hRSI/1hDC/15mRSI 33/33/34 = 88% robustness, OOS +18.81% ★
+  1h-only RSI+DC 50/50 = 66% rob (date-aligned), 77% (bar-aligned)
+  88% is the ceiling — only W2 (Nov 20-Dec 2 whipsaw) remains negative.
+
+Phase 20 parameter stability (28 perturbations, all ≥66% rob):
+  1hRSI: min=77%, avg=86%. Very stable across all params.
+  15mRSI: min=66%, avg=83%. Most sensitive — don't tighten oversold below 35.
+  Strategy is NOT parameter-overfit. 88% is a structural property.
 """
 
 from __future__ import annotations
