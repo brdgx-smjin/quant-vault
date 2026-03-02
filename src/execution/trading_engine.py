@@ -59,7 +59,12 @@ class TradingEngine:
         self.position_manager = PositionManager()
         self.risk_manager = RiskManager()
         self.alerter = Alerter()
-        self.dashboard = DashboardProvider(initial_equity=Decimal("5000"))
+        from pathlib import Path
+        _project_root = Path(__file__).resolve().parent.parent.parent
+        self.dashboard = DashboardProvider(
+            initial_equity=Decimal("5000"),
+            trade_history_path=_project_root / "data" / "trade_history.json",
+        )
         self.collector = BinanceCollector(symbol=symbol, testnet=testnet)
 
         # State

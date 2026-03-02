@@ -1,0 +1,83 @@
+[
+  {
+    "timestamp": "2026-02-26T00:00:00Z",
+    "pnl": "-4.62",
+    "side": "short",
+    "entry": 66543.5,
+    "exit": 66936.9,
+    "reason": "new_signal",
+    "component_id": ""
+  },
+  {
+    "timestamp": "2026-02-26T01:57:33Z",
+    "pnl": "-7.86",
+    "side": "short",
+    "entry": 66868.5,
+    "exit": 68178.65,
+    "reason": "stop_loss",
+    "component_id": ""
+  },
+  {
+    "timestamp": "2026-02-26T03:28:59Z",
+    "pnl": "-8.58",
+    "side": "short",
+    "entry": 68481.0,
+    "exit": 69260.63,
+    "reason": "stop_loss",
+    "component_id": ""
+  },
+  {
+    "timestamp": "2026-02-26T06:00:00Z",
+    "pnl": "-0.17",
+    "side": "short",
+    "entry": 69087.4,
+    "exit": 69104.9,
+    "reason": "new_signal",
+    "component_id": ""
+  },
+  {
+    "timestamp": "2026-02-26T23:06:32Z",
+    "pnl": "7.20",
+    "side": "short",
+    "entry": 69120.0,
+    "exit": 67680.64,
+    "reason": "take_profit",
+    "component_id": ""
+  },
+  {
+    "timestamp": "2026-02-27T18:45:50Z",
+    "pnl": "32.10",
+    "side": "short",
+    "entry": 67896.3,
+    "exit": 67378.59,
+    "reason": "partial_tp1",
+    "component_id": "15m_mtf_rsi_mean_reversion"
+  },
+  {
+    "timestamp": "2026-02-27T19:11:06Z",
+    "pnl": "15.58",
+    "side": "short",
+    "entry": 67896.3,
+    "exit": 67058.65,
+    "reason": "partial_tp2",
+    "component_id": "15m_mtf_rsi_mean_reversion"
+  },
+  {
+    "timestamp": "2026-02-27T19:53:19Z",
+    "pnl": "58.82",
+    "side": "short",
+    "entry": 67896.3,
+    "exit": 66540.95,
+    "reason": "take_profit",
+    "component_id": "15m_mtf_rsi_mean_reversion"
+  },
+  {
+    "timestamp": "2026-02-28T23:52:00Z",
+    "pnl": "43.90",
+    "side": "short",
+    "entry": 65069.5,
+    "exit": 64406.03,
+    "reason": "partial_tp1",
+    "component_id": "15m_mtf_rsi_mean_reversion"
+  }
+]
