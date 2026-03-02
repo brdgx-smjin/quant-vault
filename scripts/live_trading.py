@@ -62,7 +62,11 @@ def build_strategy() -> CrossTimeframePortfolio:
         atr_tp_mult=3.0,
         cooldown_bars=6,
     )
-    rsi_1h_mtf = MultiTimeframeFilter(rsi_1h)
+    rsi_1h_mtf = MultiTimeframeFilter(
+        rsi_1h,
+        extreme_oversold_rsi=20.0,
+        extreme_overbought_rsi=70.0,
+    )
 
     # 1h Donchian Trend Following + MTF(4h)
     dc_1h = DonchianTrendStrategy(
@@ -72,7 +76,7 @@ def build_strategy() -> CrossTimeframePortfolio:
         vol_mult=0.8,
         cooldown_bars=6,
     )
-    dc_1h_mtf = MultiTimeframeFilter(dc_1h)
+    dc_1h_mtf = MultiTimeframeFilter(dc_1h)  # DC has no RSI/WillR metadata → override N/A
 
     # 15m RSI Mean Reversion + MTF(4h)
     rsi_15m = RSIMeanReversionStrategy(
@@ -82,7 +86,11 @@ def build_strategy() -> CrossTimeframePortfolio:
         atr_tp_mult=3.0,
         cooldown_bars=12,
     )
-    rsi_15m_mtf = MultiTimeframeFilter(rsi_15m)
+    rsi_15m_mtf = MultiTimeframeFilter(
+        rsi_15m,
+        extreme_oversold_rsi=20.0,
+        extreme_overbought_rsi=70.0,
+    )
 
     # Cross-TF portfolio: 33/33/34 weights
     portfolio = CrossTimeframePortfolio(
@@ -95,6 +103,7 @@ def build_strategy() -> CrossTimeframePortfolio:
     logger.info("  1h DC:   24-bar, SL=2.0ATR, RR=2.0, vol=0.8x + 4h MTF (33%%)")
     logger.info("  15m RSI: 35/65, SL=2.0ATR, TP=3.0ATR, cool=12 + 4h MTF (34%%)")
     logger.info("  Allocation: 33/33/34 (cross-TF)")
+    logger.info("  MTF Override: RSI<20 oversold, RSI>70 overbought (Phase 40)")
     return portfolio
 
 
