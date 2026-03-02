@@ -47,7 +47,7 @@ Binance BTC/USDT 선물거래를 위한 AI 퀀트 트레이딩 시스템.
   - Phase 25b 검증: 303/375 weight 조합 88%, 11/12 param 변동 안정
   - Fallback: 3-comp (33/33/34, 88% rob, +18.81% OOS)
 
-## 전략 연구 결과 (Phase 3-39, 2025-02~2026-02)
+## 전략 연구 결과 (Phase 3-40, 2025-02~2026-03)
 - **88% robustness = 구조적 천장** — W2(2025-11-20~12-02) 모든 전략 동시 손실, 해결 불가
 - 테스트 완료된 5th 컴포넌트 (15개, 모두 실패):
   CCI, VWAP, Ichimoku, Fisher, Z-Score, CMF, StochRSI, EFI, Aroon, DPO, TSI, Supertrend, PSAR, TRIX, OBV
@@ -55,7 +55,8 @@ Binance BTC/USDT 선물거래를 위한 AI 퀀트 트레이딩 시스템.
   멀티에셋(ETH/SOL), 5m/30m/2h 타임프레임, 적응형 가중치, 출구 최적화,
   레짐 필터(Hurst/ER), 펀딩레이트, 트레일링스탑, ADX/Chop 필터,
   캔들바디/세션/시간대 필터, ML XGBoost, ML 레짐분류기, 방향성 비대칭(P38), OBV(P39)
-- 상세 결과: logs/phase{3-39}.log, MEMORY.md 참조
+- **MTF Extreme Override (P40)**: 극단 과매도/과매수 시 MTF 우회 — 88% 유지, -0.31% delta → 배포됨
+- 상세 결과: logs/phase{3-40}.log, MEMORY.md 참조
 
 ## tmux 환경
 - 세션 이름: quant

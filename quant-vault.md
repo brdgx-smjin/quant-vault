@@ -24,10 +24,11 @@ kanban-plugin: board
 
 ## Done
 
-- [x] Phase 1-39 전략 연구 완료 (15개 지표, 모든 접근법 테스트)
+- [x] Phase 1-40 전략 연구 완료 (15개 지표, 모든 접근법 테스트)
+- [x] Phase 40: MTF Extreme Override 배포 (RSI<20/RSI>70 우회, 88% 유지)
 - [x] ML 접근 실패 확정 (XGBoost, Regime Classifier — W2 감지 불가)
 - [x] 멀티에셋 실패 확정 (ETH/SOL 상관관계 0.74+, 최대 77%)
-- [x] 88% robustness = 구조적 천장 확정 (Phase 39, W2 해결 불가)
+- [x] 88% robustness = 구조적 천장 확정 (Phase 40, W2 해결 불가)
 - [x] 4-comp Cross-TF 포트폴리오 프로덕션 배포 (1hRSI/1hDC/15mRSI/1hWillR)
 - [x] 데이터 수집 pm2 전환 (claude 에이전트 → pm2 cron)
 - [x] Discord 일일 팀 보고 구현 (!report + 자동 스케줄)
