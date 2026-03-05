@@ -105,8 +105,9 @@ class RiskManager:
             kelly_fraction = Decimal(str(self.sizing.get("kelly_fraction", "0.25")))
             position_size = position_size * kelly_fraction
 
-        # Cap position size by account balance * leverage (convert to asset units)
-        max_notional = account_balance * Decimal("1.0") * leverage
+        # Cap position size by account balance * leverage / max_positions
+        max_positions = Decimal(str(self.risk.get("max_open_positions", 4)))
+        max_notional = (account_balance * leverage) / max_positions
         max_position = max_notional / price
         position_size = min(position_size, max_position)
 
