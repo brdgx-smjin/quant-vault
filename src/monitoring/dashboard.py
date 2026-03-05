@@ -215,6 +215,52 @@ class DashboardProvider:
 
         return (mean_ret / std_ret) * math.sqrt(annualization_factor)
 
+    def reconcile_equity(self, actual_balance: Decimal) -> None:
+        """Adjust initial equity so equity curve matches actual Binance balance.
+
+        If trade_history.json is missing trades (e.g. from earlier sessions),
+        the initial equity is corrected so that initial + tracked_pnl = actual.
+
+        Args:
+            actual_balance: Current USDT balance from Binance API.
+        """
+        tracked_pnl = sum(t["pnl"] for t in self.trades) if self.trades else Decimal("0")
+        expected = float(self._initial_equity) + float(tracked_pnl)
+        actual = float(actual_balance)
+        diff = abs(expected - actual)
+
+        if diff <= 1.0:
+            logger.info(
+                "Equity in sync: expected=%.2f, actual=%.2f (diff=%.2f)",
+                expected, actual, diff,
+            )
+            return
+
+        corrected = actual_balance - tracked_pnl
+        logger.warning(
+            "Equity reconciliation: expected=%.2f, actual=%.2f (diff=%.2f) "
+            "→ initial_equity %.2f→%.2f",
+            expected, actual, diff,
+            float(self._initial_equity), float(corrected),
+        )
+
+        # Reset and replay trades with corrected initial equity
+        self._initial_equity = corrected
+        self._equity_curve = [float(corrected)]
+        self._peak_equity = float(corrected)
+        self._max_drawdown = 0.0
+        self._returns = []
+        self._consecutive_losses = 0
+        self._max_consecutive_losses = 0
+        self._dd_start_trade = None
+        self._max_drawdown_recovery_trades = 0
+        saved_trades = list(self.trades)
+        self.trades = []
+        for t in saved_trades:
+            pnl = t["pnl"] if isinstance(t["pnl"], Decimal) else Decimal(str(t["pnl"]))
+            metadata = {k: v for k, v in t.items() if k != "pnl"}
+            self._record_internal(pnl, metadata)
+
     @property
     def equity_curve(self) -> list[float]:
         """Current equity curve values."""

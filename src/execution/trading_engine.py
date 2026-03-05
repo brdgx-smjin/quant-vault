@@ -107,6 +107,9 @@ class TradingEngine:
         balance = await self.executor.get_balance()
         logger.info("Account balance: %s USDT", balance)
 
+        # Reconcile dashboard equity with actual Binance balance
+        self.dashboard.reconcile_equity(balance)
+
         # Sync with any existing positions on Binance
         await self._sync_positions()
 
