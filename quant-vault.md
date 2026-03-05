@@ -17,7 +17,7 @@ kanban-plugin: board
 - [ ] 라이브 트레이딩 운영 (4-comp Cross-TF, 88% rob, +23.98% OOS)
 - [ ] 데이터 수집 자동화 (pm2 cron 30분 주기)
 - [ ] Discord 봇 운영 (일일 보고 09:00 KST + 모니터링)
-- [ ] 라이브 트레이딩 수익성 모니터링 (3/4 -$266 손실 발생, cooldown 버그 수정 후 관찰 중)
+- [ ] 라이브 트레이딩 수익성 모니터링 (3/5 4-comp 복원, cooldown 수정 + override 비활성화 후 관찰)
 
 
 ## On Hold
@@ -25,6 +25,8 @@ kanban-plugin: board
 
 ## Done
 
+- [x] 4-comp 복원 — Discord 에이전트가 WillR 제거한 것 복구 (3/5, 15/50/10/25)
+- [x] Extreme Override 비활성화 확정 — RSI>70 SHORT 강제진입이 상승장에서 손실 유발 (3/5)
 - [x] Cooldown 버그 수정 — len(df) → timestamp 기반 (3/5, SHORT만 10회 잡는 문제 해결)
 - [x] pm2 data-collector 복구 (Discord 에이전트가 삭제한 것 재등록, 3/5)
 - [x] Discord daily report에 데이터 수집 연동 (09:00 KST 보고 시 자동 수집)

@@ -2,11 +2,12 @@
 """Live paper trading bot entry point.
 
 Runs the TradingEngine with 15m Cross-TF portfolio on Binance testnet.
-Phase 16 validated (9w): 89% robustness (8/9 windows), OOS +19.61%.
-  - 1h RSI_35_65+MTF(4h):  mean reversion (66% robustness at 9w)  → 33%
-  - 1h DC_24+MTF(4h):      trend following (55% robustness at 9w) → 33%
-  - 15m RSI_35_65+MTF(4h): mean reversion (77% robustness at 9w) → 34%
-  - Cross-TF: decorrelates negative windows (15m W5 vs 1h W6) → 89%
+Phase 25 validated (9w): 88% robustness (8/9 windows), OOS +23.98%.
+  - 1h RSI_35_65+MTF(4h):  mean reversion  → 15%
+  - 1h DC_24+MTF(4h):      trend following  → 50%
+  - 15m RSI_35_65+MTF(4h): mean reversion   → 10%
+  - 1h WillR_14_90+MTF(4h): mean reversion  → 25%
+  - Cross-TF: decorrelates negative windows → 88%
 Hard safety abort if TESTNET=false to prevent accidental real-money trading.
 """
 
@@ -28,6 +29,7 @@ from src.strategy.cross_tf_portfolio import CrossTimeframePortfolio
 from src.strategy.donchian_trend import DonchianTrendStrategy
 from src.strategy.mtf_filter import MultiTimeframeFilter
 from src.strategy.rsi_mean_reversion import RSIMeanReversionStrategy
+from src.strategy.willr_mean_reversion import WilliamsRMeanReversionStrategy
 
 logger = setup_logging("live")
 
@@ -47,14 +49,15 @@ logger.propagate = False
 
 
 def build_strategy() -> CrossTimeframePortfolio:
-    """Build cross-TF portfolio: 1h RSI + 1h DC + 15m RSI, all with 4h MTF.
+    """Build cross-TF portfolio: 1h RSI + 1h DC + 15m RSI + 1h WillR, all with 4h MTF.
 
-    Phase 16 validated (9w): 89% robustness, OOS +19.61%, only W2 negative.
+    Phase 25 validated (9w): 88% robustness, OOS +23.98%, only W2 negative.
+    303/375 weight combos achieve 88%. 11/12 param perturbations stable.
 
     Returns:
-        CrossTimeframePortfolio with 33/33/34 weights.
+        CrossTimeframePortfolio with 15/50/10/25 weights.
     """
-    # 1h RSI Mean Reversion + MTF(4h)
+    # 1h RSI Mean Reversion + MTF(4h) — 15%
     rsi_1h = RSIMeanReversionStrategy(
         rsi_oversold=35,
         rsi_overbought=65,
@@ -64,7 +67,7 @@ def build_strategy() -> CrossTimeframePortfolio:
     )
     rsi_1h_mtf = MultiTimeframeFilter(rsi_1h)
 
-    # 1h Donchian Trend Following + MTF(4h)
+    # 1h Donchian Trend Following + MTF(4h) — 50%
     dc_1h = DonchianTrendStrategy(
         entry_period=24,
         atr_sl_mult=2.0,
@@ -72,9 +75,9 @@ def build_strategy() -> CrossTimeframePortfolio:
         vol_mult=0.8,
         cooldown_bars=6,
     )
-    dc_1h_mtf = MultiTimeframeFilter(dc_1h)  # DC has no RSI/WillR metadata → override N/A
+    dc_1h_mtf = MultiTimeframeFilter(dc_1h)
 
-    # 15m RSI Mean Reversion + MTF(4h)
+    # 15m RSI Mean Reversion + MTF(4h) — 10%
     rsi_15m = RSIMeanReversionStrategy(
         rsi_oversold=35,
         rsi_overbought=65,
@@ -84,18 +87,30 @@ def build_strategy() -> CrossTimeframePortfolio:
     )
     rsi_15m_mtf = MultiTimeframeFilter(rsi_15m)
 
-    # Cross-TF portfolio: 33/33/34 weights
+    # 1h Williams %R Mean Reversion + MTF(4h) — 25%
+    willr_1h = WilliamsRMeanReversionStrategy(
+        willr_period=14,
+        oversold_level=90.0,
+        overbought_level=90.0,
+        atr_sl_mult=2.0,
+        atr_tp_mult=3.0,
+        cooldown_bars=6,
+    )
+    willr_1h_mtf = MultiTimeframeFilter(willr_1h)
+
+    # Cross-TF portfolio: 15/50/10/25 weights (Phase 25 optimal)
     portfolio = CrossTimeframePortfolio(
-        strategies_15m=[(rsi_15m_mtf, 0.34)],
-        strategies_1h=[(rsi_1h_mtf, 0.33), (dc_1h_mtf, 0.33)],
+        strategies_15m=[(rsi_15m_mtf, 0.10)],
+        strategies_1h=[(rsi_1h_mtf, 0.15), (dc_1h_mtf, 0.50), (willr_1h_mtf, 0.25)],
     )
 
     logger.info("Strategy: %s", portfolio.name)
-    logger.info("  1h RSI:  35/65, SL=2.0ATR, TP=3.0ATR, cool=6 + 4h MTF (33%%)")
-    logger.info("  1h DC:   24-bar, SL=2.0ATR, RR=2.0, vol=0.8x + 4h MTF (33%%)")
-    logger.info("  15m RSI: 35/65, SL=2.0ATR, TP=3.0ATR, cool=12 + 4h MTF (34%%)")
-    logger.info("  Allocation: 33/33/34 (cross-TF)")
-    logger.info("  MTF Override: DISABLED (extreme override removed — bullish blocks SHORT)")
+    logger.info("  1h RSI:  35/65, SL=2.0ATR, TP=3.0ATR, cool=6 + 4h MTF (15%%)")
+    logger.info("  1h DC:   24-bar, SL=2.0ATR, RR=2.0, vol=0.8x + 4h MTF (50%%)")
+    logger.info("  15m RSI: 35/65, SL=2.0ATR, TP=3.0ATR, cool=12 + 4h MTF (10%%)")
+    logger.info("  1h WillR: p14/t90, SL=2.0ATR, TP=3.0ATR, cool=6 + 4h MTF (25%%)")
+    logger.info("  Allocation: 15/50/10/25 (Phase 25 optimal)")
+    logger.info("  MTF Override: DISABLED")
     return portfolio
 
 
@@ -111,8 +126,8 @@ async def main() -> None:
     logger.info("=" * 60)
     logger.info("  LIVE PAPER TRADING — %s | 15m + 1h Cross-TF", SYMBOL)
     logger.info("  Mode: TESTNET (paper trading)")
-    logger.info("  Strategy: Cross-TF Portfolio (1hRSI + 1hDC + 15mRSI)")
-    logger.info("  Phase 16: 89%% robustness, OOS +19.61%%")
+    logger.info("  Strategy: 4-comp Cross-TF (1hRSI + 1hDC + 15mRSI + 1hWillR)")
+    logger.info("  Phase 25: 88%% robustness, OOS +23.98%%")
     logger.info("=" * 60)
     logger.info("")
 
