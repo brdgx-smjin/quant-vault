@@ -14,10 +14,10 @@ kanban-plugin: board
 
 ## In Progress
 
-- [ ] 라이브 트레이딩 운영 (4-comp Cross-TF, 88% rob, +23.98% OOS)
+- [ ] 라이브 트레이딩 운영 (4-comp Cross-TF, MTF close>EMA20 Phase 41 적용, 77% rob, +21.39% OOS)
 - [ ] 데이터 수집 자동화 (pm2 cron 30분 주기)
 - [ ] Discord 봇 운영 (일일 보고 09:00 KST + 모니터링)
-- [ ] 라이브 트레이딩 수익성 모니터링 (3/5 4-comp 복원, cooldown 수정 + override 비활성화 후 관찰)
+- [ ] 라이브 트레이딩 수익성 모니터링 (3/5 MTF close>EMA20 배포, cooldown 수정 적용 중)
 
 
 ## On Hold
@@ -25,7 +25,7 @@ kanban-plugin: board
 
 ## Done
 
-- [x] Phase 41: MTF 반응속도 최적화 — close>EMA20이 최적 (77% rob, +21.39% OOS, W2=-0.16%) (3/5)
+- [x] Phase 41: MTF close>EMA20 프로덕션 배포 (77% rob, +21.39% OOS, W2=-0.16%) (3/5)
 - [x] 4-comp 복원 — Discord 에이전트가 WillR 제거한 것 복구 (3/5, 15/50/10/25)
 - [x] Extreme Override 비활성화 확정 — RSI>70 SHORT 강제진입이 상승장에서 손실 유발 (3/5)
 - [x] Cooldown 버그 수정 — len(df) → timestamp 기반 (3/5, SHORT만 10회 잡는 문제 해결)
