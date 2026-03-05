@@ -246,18 +246,43 @@ def _build_daily_report() -> str:
     return header + "\n\n".join(sections)
 
 
+def _run_data_collection() -> str:
+    """Run data collection and return summary."""
+    try:
+        proc = subprocess.run(
+            [PYTHON, str(PROJECT_ROOT / "scripts" / "collect_data.py")],
+            capture_output=True, text=True, cwd=PROJECT_ROOT, timeout=120,
+        )
+        output = proc.stdout + proc.stderr
+        fetched = [l for l in output.splitlines() if "Fetched" in l and "candles" in l]
+        errors = [l for l in output.splitlines() if "[ERROR]" in l]
+        if proc.returncode == 0:
+            return f"데이터 수집 완료: {len(fetched)}건 fetch" + (f", 에러 {len(errors)}건" if errors else "")
+        return f"데이터 수집 실패 (exit={proc.returncode})"
+    except subprocess.TimeoutExpired:
+        return "데이터 수집 타임아웃 (120s)"
+    except Exception as e:
+        return f"데이터 수집 에러: {e}"
+
+
 @tasks.loop(time=datetime.time(hour=0, minute=0, tzinfo=datetime.timezone.utc))
 async def daily_team_report() -> None:
-    """Send daily team report at 00:00 UTC (09:00 KST)."""
+    """Run data collection, then send daily team report at 00:00 UTC (09:00 KST)."""
     channel = client.get_channel(CHANNEL_ID)
     if channel is None:
         logger.warning("daily_team_report: channel %s not found", CHANNEL_ID)
         return
 
+    # Run data collection before report
+    logger.info("Running daily data collection...")
+    loop = asyncio.get_event_loop()
+    collect_result = await loop.run_in_executor(None, _run_data_collection)
+    logger.info("Data collection: %s", collect_result)
+
     logger.info("Generating daily team report...")
     try:
-        loop = asyncio.get_event_loop()
         report = await loop.run_in_executor(None, _build_daily_report)
+        report += f"\n\n{'━' * 20}\n{collect_result}"
         # Split if needed (Discord 2000 char limit)
         while report:
             chunk = report[:1990]
