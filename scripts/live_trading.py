@@ -51,8 +51,9 @@ logger.propagate = False
 def build_strategy() -> CrossTimeframePortfolio:
     """Build cross-TF portfolio: 1h RSI + 1h DC + 15m RSI + 1h WillR, all with 4h MTF.
 
-    Phase 25 validated (9w): 88% robustness, OOS +23.98%, only W2 negative.
-    303/375 weight combos achieve 88%. 11/12 param perturbations stable.
+    Phase 41: MTF switched from EMA_20 vs EMA_50 to close > EMA_20 (price_vs_ema).
+    Faster trend reaction: 62K→73K rally no longer stuck in BEARISH for 2 weeks.
+    WF result: 77% rob, +21.39% OOS (vs +12.55% baseline), W2 nearly breakeven.
 
     Returns:
         CrossTimeframePortfolio with 15/50/10/25 weights.
@@ -65,7 +66,7 @@ def build_strategy() -> CrossTimeframePortfolio:
         atr_tp_mult=3.0,
         cooldown_bars=6,
     )
-    rsi_1h_mtf = MultiTimeframeFilter(rsi_1h)
+    rsi_1h_mtf = MultiTimeframeFilter(rsi_1h, trend_mode="price_vs_ema")
 
     # 1h Donchian Trend Following + MTF(4h) — 50%
     dc_1h = DonchianTrendStrategy(
@@ -75,7 +76,7 @@ def build_strategy() -> CrossTimeframePortfolio:
         vol_mult=0.8,
         cooldown_bars=6,
     )
-    dc_1h_mtf = MultiTimeframeFilter(dc_1h)
+    dc_1h_mtf = MultiTimeframeFilter(dc_1h, trend_mode="price_vs_ema")
 
     # 15m RSI Mean Reversion + MTF(4h) — 10%
     rsi_15m = RSIMeanReversionStrategy(
@@ -85,7 +86,7 @@ def build_strategy() -> CrossTimeframePortfolio:
         atr_tp_mult=3.0,
         cooldown_bars=12,
     )
-    rsi_15m_mtf = MultiTimeframeFilter(rsi_15m)
+    rsi_15m_mtf = MultiTimeframeFilter(rsi_15m, trend_mode="price_vs_ema")
 
     # 1h Williams %R Mean Reversion + MTF(4h) — 25%
     willr_1h = WilliamsRMeanReversionStrategy(
@@ -96,7 +97,7 @@ def build_strategy() -> CrossTimeframePortfolio:
         atr_tp_mult=3.0,
         cooldown_bars=6,
     )
-    willr_1h_mtf = MultiTimeframeFilter(willr_1h)
+    willr_1h_mtf = MultiTimeframeFilter(willr_1h, trend_mode="price_vs_ema")
 
     # Cross-TF portfolio: 15/50/10/25 weights (Phase 25 optimal)
     portfolio = CrossTimeframePortfolio(
@@ -110,7 +111,7 @@ def build_strategy() -> CrossTimeframePortfolio:
     logger.info("  15m RSI: 35/65, SL=2.0ATR, TP=3.0ATR, cool=12 + 4h MTF (10%%)")
     logger.info("  1h WillR: p14/t90, SL=2.0ATR, TP=3.0ATR, cool=6 + 4h MTF (25%%)")
     logger.info("  Allocation: 15/50/10/25 (Phase 25 optimal)")
-    logger.info("  MTF Override: DISABLED")
+    logger.info("  MTF: price_vs_ema (close > EMA_20) — Phase 41")
     return portfolio
 
 

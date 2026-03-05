@@ -246,11 +246,11 @@ class TradingEngine:
         if self.htf_timeframe and hasattr(self.strategy, "set_htf_data"):
             self._rebuild_htf()
             self.strategy.set_htf_data(self.df_htf)
-            trend = "bullish" if self.df_htf["ema_20"].iloc[-1] > self.df_htf["ema_50"].iloc[-1] else "bearish"
-            logger.info("[MTF] %s trend: %s (EMA20=%.2f, EMA50=%.2f)",
-                        self.htf_timeframe, trend,
-                        self.df_htf["ema_20"].iloc[-1],
-                        self.df_htf["ema_50"].iloc[-1])
+            close_val = self.df_htf["close"].iloc[-1]
+            ema20_val = self.df_htf["ema_20"].iloc[-1]
+            trend = "bullish" if close_val > ema20_val else "bearish"
+            logger.info("[MTF] %s trend: %s (close=%.2f vs EMA20=%.2f)",
+                        self.htf_timeframe, trend, close_val, ema20_val)
 
         # Generate signals — multi-position for cross-TF, single for legacy
         if hasattr(self.strategy, "generate_signals"):
@@ -327,11 +327,11 @@ class TradingEngine:
 
         # Append HTF trend info to reason if available
         if self.df_htf is not None and len(self.df_htf) >= 2:
-            ema20 = self.df_htf["ema_20"].iloc[-1]
-            ema50 = self.df_htf["ema_50"].iloc[-1]
-            if not (pd.isna(ema20) or pd.isna(ema50)):
-                trend = "상방" if float(ema20) > float(ema50) else "하방"
-                signal.reason += f" + {self.htf_timeframe} EMA 트렌드 {trend}"
+            close_v = self.df_htf["close"].iloc[-1]
+            ema20_v = self.df_htf["ema_20"].iloc[-1]
+            if not (pd.isna(close_v) or pd.isna(ema20_v)):
+                trend = "상방" if float(close_v) > float(ema20_v) else "하방"
+                signal.reason += f" + {self.htf_timeframe} 트렌드 {trend}"
 
         # Check daily trade limit
         if self.dashboard.is_daily_limit_reached():
