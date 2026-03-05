@@ -14,10 +14,10 @@ kanban-plugin: board
 
 ## In Progress
 
-- [ ] 라이브 트레이딩 운영 (4-comp Cross-TF, MTF close>EMA20 Phase 41 적용, 77% rob, +21.39% OOS)
+- [ ] 라이브 트레이딩 운영 (4-comp Cross-TF, MTF close>EMA20, LONG/SHORT 동시보유, 풀사이즈 포지션)
 - [ ] 데이터 수집 자동화 (pm2 cron 30분 주기)
 - [ ] Discord 봇 운영 (일일 보고 09:00 KST + 모니터링)
-- [ ] 라이브 트레이딩 수익성 모니터링 (3/5 MTF close>EMA20 배포, cooldown 수정 적용 중)
+- [ ] 라이브 트레이딩 수익성 모니터링 (PnL 자동보정 적용, 실잔고 동기화)
 
 
 ## On Hold
@@ -25,6 +25,10 @@ kanban-plugin: board
 
 ## Done
 
+- [x] PnL 자동보정 — 시작 시 바이낸스 실잔고와 대시보드 동기화 (3/6, $180 누락 자동보정)
+- [x] 포지션 사이징 수정 — portfolio_weight 스케일링 제거, 풀사이즈 진입 (3/6)
+- [x] LONG/SHORT 동시보유 허용 — 컴포넌트별 독립 포지션 (3/6)
+- [x] max_open_positions 3→4 (4-comp 동시 진입 허용) (3/6)
 - [x] Phase 41: MTF close>EMA20 프로덕션 배포 (77% rob, +21.39% OOS, W2=-0.16%) (3/5)
 - [x] 4-comp 복원 — Discord 에이전트가 WillR 제거한 것 복구 (3/5, 15/50/10/25)
 - [x] Extreme Override 비활성화 확정 — RSI>70 SHORT 강제진입이 상승장에서 손실 유발 (3/5)
