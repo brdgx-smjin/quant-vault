@@ -1,7 +1,7 @@
 risk_management:
   max_loss_per_trade_pct: 1.00      # 100% per trade (50x from 2%)
   daily_max_loss_pct: 2.50          # 250% daily (50x from 5%)
-  max_open_positions: 3
+  max_open_positions: 4
   max_leverage: 10
   default_leverage: 5
   trailing_stop_pct: 0.015          # 1.5%

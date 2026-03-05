@@ -346,12 +346,8 @@ class TradingEngine:
             logger.warning("Trade rejected by RiskManager: %s", risk_check.reason)
             return
 
-        # Apply portfolio weight to position size (50/50 = 0.5x per strategy)
-        portfolio_weight = signal.metadata.get("portfolio_weight", 1.0)
-        if portfolio_weight < 1.0:
-            risk_check.position_size = risk_check.position_size * Decimal(str(portfolio_weight))
-            logger.info("[PORTFOLIO] Position scaled by %.0f%% → size=%.4f",
-                        portfolio_weight * 100, float(risk_check.position_size))
+        # Each component uses the full risk-manager approved size independently.
+        # Portfolio weight is only used for backtest WF return aggregation.
 
         # Determine position key for this component
         component_id = signal.metadata.get("component_id", "")
