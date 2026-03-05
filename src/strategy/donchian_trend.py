@@ -105,7 +105,7 @@ class DonchianTrendStrategy(BaseStrategy):
         self.cooldown_bars = cooldown_bars
         self.require_close_break = require_close_break
         self.symbol = symbol
-        self._last_entry_idx = -999
+        self._last_entry_ts: pd.Timestamp | None = None
 
     def generate_signal(self, df: pd.DataFrame) -> TradeSignal:
         """Generate trend signal from Donchian channel breakout.
@@ -120,14 +120,15 @@ class DonchianTrendStrategy(BaseStrategy):
         if len(df) < min_bars:
             return self._hold(df)
 
-        # Cooldown
-        current_idx = len(df)
-        if current_idx - self._last_entry_idx < self.cooldown_bars:
-            return self._hold(df)
-
         last = df.iloc[-1]
         close = float(last["close"])
         ts = df.index[-1]
+
+        # Cooldown (timestamp-based)
+        if self._last_entry_ts is not None:
+            bars_since = len(df.loc[self._last_entry_ts:]) - 1 if self._last_entry_ts in df.index else self.cooldown_bars
+            if bars_since < self.cooldown_bars:
+                return self._hold(df)
 
         atr = last.get("atr_14")
         volume = last.get("volume")
@@ -160,7 +161,7 @@ class DonchianTrendStrategy(BaseStrategy):
             breakout_pct = (close - channel_high) / channel_high * 100
             confidence = min(1.0, 0.5 + breakout_pct * 0.5)
 
-            self._last_entry_idx = current_idx
+            self._last_entry_ts = ts
             return TradeSignal(
                 signal=Signal.LONG,
                 symbol=self.symbol,
@@ -186,7 +187,7 @@ class DonchianTrendStrategy(BaseStrategy):
             breakout_pct = (channel_low - close) / channel_low * 100
             confidence = min(1.0, 0.5 + breakout_pct * 0.5)
 
-            self._last_entry_idx = current_idx
+            self._last_entry_ts = ts
             return TradeSignal(
                 signal=Signal.SHORT,
                 symbol=self.symbol,

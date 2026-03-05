@@ -66,7 +66,7 @@ class RSIMeanReversionStrategy(BaseStrategy):
         self.bb_upper = bb_column_upper
         self.bb_proximity = bb_proximity
         self.cooldown_bars = cooldown_bars
-        self._last_entry_idx = -999
+        self._last_entry_ts: pd.Timestamp | None = None
         self.atr_sl_mult = atr_sl_mult
         self.atr_tp_mult = atr_tp_mult
         self.symbol = symbol
@@ -100,10 +100,11 @@ class RSIMeanReversionStrategy(BaseStrategy):
         bb_low = float(bb_low)
         bb_up = float(bb_up)
 
-        # Cooldown: don't trade too frequently
-        current_idx = len(df)
-        if current_idx - self._last_entry_idx < self.cooldown_bars:
-            return self._hold(df)
+        # Cooldown: don't trade too frequently (timestamp-based)
+        if self._last_entry_ts is not None:
+            bars_since = len(df.loc[self._last_entry_ts:]) - 1 if self._last_entry_ts in df.index else self.cooldown_bars
+            if bars_since < self.cooldown_bars:
+                return self._hold(df)
 
         # RSI divergence check: price making new low but RSI higher (bullish)
         bullish_div = False
@@ -134,7 +135,7 @@ class RSIMeanReversionStrategy(BaseStrategy):
             confidence = 0.55 + (self.rsi_oversold - rsi) / 100.0
             if bullish_div:
                 confidence += 0.15
-            self._last_entry_idx = current_idx
+            self._last_entry_ts = ts
             return TradeSignal(
                 signal=Signal.LONG,
                 symbol=self.symbol,
@@ -158,7 +159,7 @@ class RSIMeanReversionStrategy(BaseStrategy):
             confidence = 0.55 + (rsi - self.rsi_overbought) / 100.0
             if bearish_div:
                 confidence += 0.15
-            self._last_entry_idx = current_idx
+            self._last_entry_ts = ts
             return TradeSignal(
                 signal=Signal.SHORT,
                 symbol=self.symbol,

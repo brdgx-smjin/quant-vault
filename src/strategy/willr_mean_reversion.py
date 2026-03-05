@@ -64,7 +64,7 @@ class WilliamsRMeanReversionStrategy(BaseStrategy):
         self.atr_sl_mult = atr_sl_mult
         self.atr_tp_mult = atr_tp_mult
         self.cooldown_bars = cooldown_bars
-        self._last_entry_idx = -999
+        self._last_entry_ts: pd.Timestamp | None = None
         self.symbol = symbol
         self._willr_col = f"WILLR_{willr_period}"
 
@@ -97,10 +97,11 @@ class WilliamsRMeanReversionStrategy(BaseStrategy):
         bb_low = float(bb_low)
         bb_up = float(bb_up)
 
-        # Cooldown
-        current_idx = len(df)
-        if current_idx - self._last_entry_idx < self.cooldown_bars:
-            return self._hold(df)
+        # Cooldown (timestamp-based)
+        if self._last_entry_ts is not None:
+            bars_since = len(df.loc[self._last_entry_ts:]) - 1 if self._last_entry_ts in df.index else self.cooldown_bars
+            if bars_since < self.cooldown_bars:
+                return self._hold(df)
 
         # Williams %R divergence check
         bullish_div = False
@@ -135,7 +136,7 @@ class WilliamsRMeanReversionStrategy(BaseStrategy):
             confidence = 0.55 + (-willr - self.oversold_level) / 200.0
             if bullish_div:
                 confidence += 0.15
-            self._last_entry_idx = current_idx
+            self._last_entry_ts = ts
             return TradeSignal(
                 signal=Signal.LONG,
                 symbol=self.symbol,
@@ -159,7 +160,7 @@ class WilliamsRMeanReversionStrategy(BaseStrategy):
             confidence = 0.55 + (willr + self.overbought_level) / 200.0
             if bearish_div:
                 confidence += 0.15
-            self._last_entry_idx = current_idx
+            self._last_entry_ts = ts
             return TradeSignal(
                 signal=Signal.SHORT,
                 symbol=self.symbol,
