@@ -122,7 +122,7 @@ class CrossTimeframePortfolio(BaseStrategy):
             df: 15m OHLCV DataFrame with indicators.
 
         Returns:
-            List of TradeSignals — one per active component (empty if conflict).
+            List of TradeSignals — one per active component.
         """
         candidates: list[tuple[TradeSignal, float]] = []
 
@@ -156,18 +156,8 @@ class CrossTimeframePortfolio(BaseStrategy):
         if not candidates:
             return []
 
-        # Check for conflicting directions — block all if conflict
-        longs = [s for s, _ in candidates if s.signal == Signal.LONG]
-        shorts = [s for s, _ in candidates if s.signal == Signal.SHORT]
-
-        if longs and shorts:
-            logger.info(
-                "[CROSS-TF] Conflicting signals: %d LONG vs %d SHORT → BLOCK ALL",
-                len(longs), len(shorts),
-            )
-            return []
-
-        # Return all non-conflicting signals
+        # Each component operates independently — LONG and SHORT can coexist
+        # across different components (e.g. 15mRSI LONG + 1hDC SHORT).
         signals = []
         for sig, weight in candidates:
             sig.metadata["portfolio_name"] = self.name
