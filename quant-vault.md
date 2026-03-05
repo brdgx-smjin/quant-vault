@@ -17,6 +17,7 @@ kanban-plugin: board
 - [ ] 라이브 트레이딩 운영 (4-comp Cross-TF, 88% rob, +23.98% OOS)
 - [ ] 데이터 수집 자동화 (pm2 cron 30분 주기)
 - [ ] Discord 봇 운영 (일일 보고 09:00 KST + 모니터링)
+- [ ] 라이브 트레이딩 수익성 모니터링 (3/4 -$266 손실 발생, cooldown 버그 수정 후 관찰 중)
 
 
 ## On Hold
@@ -24,6 +25,9 @@ kanban-plugin: board
 
 ## Done
 
+- [x] Cooldown 버그 수정 — len(df) → timestamp 기반 (3/5, SHORT만 10회 잡는 문제 해결)
+- [x] pm2 data-collector 복구 (Discord 에이전트가 삭제한 것 재등록, 3/5)
+- [x] Discord daily report에 데이터 수집 연동 (09:00 KST 보고 시 자동 수집)
 - [x] Phase 1-40 전략 연구 완료 (15개 지표, 모든 접근법 테스트)
 - [x] Phase 40: MTF Extreme Override 배포 (RSI<20/RSI>70 우회, 88% 유지)
 - [x] ML 접근 실패 확정 (XGBoost, Regime Classifier — W2 감지 불가)
