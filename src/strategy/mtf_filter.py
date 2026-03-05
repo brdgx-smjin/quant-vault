@@ -21,10 +21,10 @@ logger = logging.getLogger(__name__)
 class MultiTimeframeFilter(BaseStrategy):
     """Wraps a base strategy and blocks signals against the higher-TF trend.
 
-    Uses 4h EMA_20 vs EMA_50 to determine trend direction:
-    - Bullish (EMA_20 > EMA_50): only LONG signals pass through.
-    - Bearish (EMA_20 < EMA_50): only SHORT signals pass through.
-    - HOLD signals always pass through unchanged.
+    Trend modes:
+    - ``ema_cross`` (default): fast EMA > slow EMA → bullish.
+      Default periods (20/50) match production baseline.
+    - ``price_vs_ema``: close > EMA → bullish. Faster reaction.
 
     Extreme override (opt-in):
         When ``extreme_oversold_rsi`` or ``extreme_oversold_willr`` are set
@@ -38,14 +38,24 @@ class MultiTimeframeFilter(BaseStrategy):
     def __init__(
         self,
         base_strategy: BaseStrategy,
+        trend_mode: str = "ema_cross",
+        fast_ema_period: int = 20,
+        slow_ema_period: int = 50,
+        price_ema_period: int = 20,
         extreme_oversold_rsi: float = 0.0,
         extreme_overbought_rsi: float = 100.0,
         extreme_oversold_willr: float = -100.0,
         extreme_overbought_willr: float = 0.0,
     ) -> None:
+        if trend_mode not in ("ema_cross", "price_vs_ema"):
+            raise ValueError(f"Unknown trend_mode: {trend_mode!r}")
         self.base_strategy = base_strategy
         self.name = f"mtf_{base_strategy.name}"
         self.df_htf: Optional[pd.DataFrame] = None
+        self.trend_mode = trend_mode
+        self.fast_ema_period = fast_ema_period
+        self.slow_ema_period = slow_ema_period
+        self.price_ema_period = price_ema_period
         self.extreme_oversold_rsi = extreme_oversold_rsi
         self.extreme_overbought_rsi = extreme_overbought_rsi
         self.extreme_oversold_willr = extreme_oversold_willr
@@ -76,13 +86,9 @@ class MultiTimeframeFilter(BaseStrategy):
         if len(self.df_htf) < 2:
             return signal
 
-        ema20 = self.df_htf["ema_20"].iloc[-1]
-        ema50 = self.df_htf["ema_50"].iloc[-1]
-
-        if pd.isna(ema20) or pd.isna(ema50):
+        bullish = self._determine_trend()
+        if bullish is None:
             return signal
-
-        bullish = float(ema20) > float(ema50)
 
         # Block LONG in bearish trend — unless extreme oversold override
         if signal.signal == Signal.LONG and not bullish:
@@ -94,8 +100,8 @@ class MultiTimeframeFilter(BaseStrategy):
                 )
                 return signal
             logger.info(
-                "[MTF] Blocked LONG — 4h trend bearish (EMA20=%.2f < EMA50=%.2f)",
-                ema20, ema50,
+                "[MTF] Blocked LONG — HTF trend bearish (%s)",
+                self._trend_description(),
             )
             return TradeSignal(
                 signal=Signal.HOLD,
@@ -115,8 +121,8 @@ class MultiTimeframeFilter(BaseStrategy):
                 )
                 return signal
             logger.info(
-                "[MTF] Blocked SHORT — 4h trend bullish (EMA20=%.2f > EMA50=%.2f)",
-                ema20, ema50,
+                "[MTF] Blocked SHORT — HTF trend bullish (%s)",
+                self._trend_description(),
             )
             return TradeSignal(
                 signal=Signal.HOLD,
@@ -129,6 +135,43 @@ class MultiTimeframeFilter(BaseStrategy):
         trend = "bullish" if bullish else "bearish"
         logger.debug("[MTF] 4h trend: %s — %s signal passed", trend, signal.signal.value)
         return signal
+
+    def _determine_trend(self) -> Optional[bool]:
+        """Determine trend direction from HTF data.
+
+        Returns:
+            True if bullish, False if bearish, None if data unavailable.
+        """
+        if self.trend_mode == "ema_cross":
+            fast_col = f"ema_{self.fast_ema_period}"
+            slow_col = f"ema_{self.slow_ema_period}"
+            if fast_col not in self.df_htf.columns or slow_col not in self.df_htf.columns:
+                logger.warning("[MTF] Missing columns %s / %s", fast_col, slow_col)
+                return None
+            fast_val = self.df_htf[fast_col].iloc[-1]
+            slow_val = self.df_htf[slow_col].iloc[-1]
+            if pd.isna(fast_val) or pd.isna(slow_val):
+                return None
+            return float(fast_val) > float(slow_val)
+
+        elif self.trend_mode == "price_vs_ema":
+            ema_col = f"ema_{self.price_ema_period}"
+            if ema_col not in self.df_htf.columns:
+                logger.warning("[MTF] Missing column %s", ema_col)
+                return None
+            close_val = self.df_htf["close"].iloc[-1]
+            ema_val = self.df_htf[ema_col].iloc[-1]
+            if pd.isna(close_val) or pd.isna(ema_val):
+                return None
+            return float(close_val) > float(ema_val)
+
+        return None
+
+    def _trend_description(self) -> str:
+        """Human-readable description of the current trend determination."""
+        if self.trend_mode == "ema_cross":
+            return f"EMA{self.fast_ema_period} vs EMA{self.slow_ema_period}"
+        return f"close vs EMA{self.price_ema_period}"
 
     def _check_extreme_override(self, signal: TradeSignal, direction: str) -> bool:
         """Check if signal qualifies for extreme-level MTF override.

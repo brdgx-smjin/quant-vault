@@ -25,6 +25,7 @@ kanban-plugin: board
 
 ## Done
 
+- [x] Phase 41: MTF 반응속도 최적화 — close>EMA20이 최적 (77% rob, +21.39% OOS, W2=-0.16%) (3/5)
 - [x] 4-comp 복원 — Discord 에이전트가 WillR 제거한 것 복구 (3/5, 15/50/10/25)
 - [x] Extreme Override 비활성화 확정 — RSI>70 SHORT 강제진입이 상승장에서 손실 유발 (3/5)
 - [x] Cooldown 버그 수정 — len(df) → timestamp 기반 (3/5, SHORT만 10회 잡는 문제 해결)
